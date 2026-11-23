@@ -1,0 +1,6 @@
+.pio/
+.vscode/
+*.pem
+*.key
+*.crt
+secrets.h
