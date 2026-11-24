@@ -2,42 +2,43 @@
 
 #include "config.h"
 #include <Arduino.h>
-#include <ESP32Servo.h>
-
-static Servo servoCerrojo;
+#include <driver/gpio.h>
 
 ServoCerrojo::ServoCerrojo(uint8_t pin, uint32_t tiempoDetachMs)
-  : pin_(pin), tiempoDetachMs_(tiempoDetachMs),
-    conectado_(false), momentoDetach_(0) {}
+  : pin_(pin), tiempoDetachMs_(tiempoDetachMs), inicializado_(false),
+    conectado_(false), ultimoMovimiento_(0) {}
 
-void ServoCerrojo::begin() {
-  servoCerrojo.setPeriodHertz(50);
+bool ServoCerrojo::begin() {
+  inicializado_ = GPIO_IS_VALID_OUTPUT_GPIO(pin_);
+  if (inicializado_) servo_.setPeriodHertz(50);
+  return inicializado_;
 }
 
-void ServoCerrojo::moverA(int angulo) {
-  if (angulo < 0) angulo = 0;
-  if (angulo > 180) angulo = 180;
-  if (!conectado_) {
-    servoCerrojo.attach(pin_);
-    conectado_ = true;
+bool ServoCerrojo::moverA(int angulo) {
+  if (!inicializado_ ||
+      (angulo != Config::ANGULO_BLOQUEO && angulo != Config::ANGULO_DESBLOQUEO)) return false;
+  if (!servo_.attached()) {
+    const int resultado = servo_.attach(pin_);
+    // En ESP32Servo 0.13.0, attach devuelve 1 al aceptar; comprobar tambien attached.
+    if (resultado <= 0 || !servo_.attached()) {
+      servo_.detach();
+      conectado_ = false;
+      return false;
+    }
   }
-  servoCerrojo.write(angulo);
-  momentoDetach_ = millis() + tiempoDetachMs_;
+  servo_.write(angulo); // La biblioteca no devuelve confirmacion fisica del movimiento.
+  conectado_ = servo_.attached();
+  if (!conectado_) return false;
+  ultimoMovimiento_ = millis();
+  return true;
 }
 
-void ServoCerrojo::bloquear() {
-  moverA(Config::ANGULO_BLOQUEO);
-}
-
-void ServoCerrojo::desbloquear() {
-  moverA(Config::ANGULO_DESBLOQUEO);
-}
+bool ServoCerrojo::bloquear() { return moverA(Config::ANGULO_BLOQUEO); }
+bool ServoCerrojo::desbloquear() { return moverA(Config::ANGULO_DESBLOQUEO); }
 
 void ServoCerrojo::actualizar() {
-  if (conectado_ && momentoDetach_ != 0 &&
-      static_cast<uint32_t>(millis() - momentoDetach_) < 0x80000000UL) {
-    servoCerrojo.detach();
+  if (conectado_ && static_cast<uint32_t>(millis() - ultimoMovimiento_) >= tiempoDetachMs_) {
+    servo_.detach();
     conectado_ = false;
-    momentoDetach_ = 0;
   }
 }
