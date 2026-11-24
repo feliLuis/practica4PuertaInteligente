@@ -41,6 +41,8 @@ def main():
                f"{sensors}/src/SerialLink.cpp"]
     legacy_timeout = ["-DTEST_SENSOR_TIMEOUT_MS=30000UL"]
     jobs = [("control", control, ["tests/control_tests.cpp"] + logic + actuator + common, legacy_timeout),
+            ("aws_payload", control, ["tests/aws_payload_tests.cpp",
+             f"{control}/src/AwsTelemetryPayload.cpp"] + fakes, []),
             ("protocol", "shared/Protocol", ["tests/protocol_tests.cpp"] + protocol + fakes, []),
             ("link", control, ["tests/link_tests.cpp"] + logic +
              [f"{control}/src/ControlLinkManager.cpp", f"{sensors}/src/SensorLinkManager.cpp",
