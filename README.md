@@ -1,15 +1,34 @@
 # Puerta inteligente con dos ESP32 y ESP-NOW
 
 Firmware modular para una cerradura con un ESP32 de control y un ESP32 de
-sensores. Ambos nodos se comunican localmente mediante ESP-NOW en modo WiFi STA,
-sin router ni Internet. El controlador conserva la autorización RFID y la
-lógica de cerradura. El nodo de sensores observa el Reed y el RC522.
+sensores. Ambos nodos se comunican localmente mediante ESP-NOW en modo WiFi STA;
+ese enlace no requiere router. La telemetría AWS del controlador sí usa WiFi STA
+e Internet. El controlador conserva la autorización RFID y la lógica de
+cerradura. El nodo de sensores observa el Reed y el RC522.
 
 El entregable reúne el [informe técnico y la matriz RF1–RF15](docs/Practica-4.md),
 los [mockups RF15](docs/mockups-reportes.md) y la
-[guía de revisión AWS](docs/revision-aws.md). El firmware de las placas y
-la integración AWS se verifican por separado. La demo de esta versión usa
-un dispositivo y un actuador virtuales.
+[guía de revisión AWS](docs/revision-aws.md). Hay tráfico reciente observado en
+Shadow, DynamoDB y CloudWatch, con `puerta=desconocida`; no está probado que el
+publicador sea la placa ni que el Reed esté vigente. El firmware solo publica:
+no aplica `desired` ni habilita el control remoto del servo. Las órdenes por voz
+se demuestran con un dispositivo y actuador virtuales.
+
+## Instalación
+
+Requisitos: Python 3.13, PlatformIO y, para la prueba MQTT/TLS local, OpenSSL
+en el `PATH` o en la variable `OPENSSL`. El cliente virtual necesita
+`paho-mqtt`, fijado en `aws/virtual_device/requirements.txt`:
+
+```powershell
+python -m pip install -r aws/virtual_device/requirements.txt
+```
+
+La revisión de AWS es opcional y no modifica recursos. En este equipo el CLI no
+está en el `PATH`; usar `$env:ProgramFiles\Amazon\AWSCLIV2\aws.exe` con el perfil
+`puerta-inteligente` y `us-east-2`, según [revision-aws.md](docs/revision-aws.md).
+Las cabeceras `esp_now_config.h` y `aws_telemetry_config.h` y el archivo
+`virtual-device.local.json` son privados y están excluidos de Git.
 
 ## Ejecución y demostración simulada
 
@@ -35,8 +54,11 @@ recuperación tras una desconexión simulada.
 
 Las [compilaciones](#entornos-compilación-y-pruebas) generan binarios locales.
 Las Lambda de AWS están disponibles en el repositorio y se probaron con clientes
-simulados. Quedan pendientes el adaptador MQTT/TLS del ESP32 de control y la
-validación de la [demo completa](docs/Practica-4.md#4-pruebas-y-validaciones).
+simulados. El adaptador MQTT/TLS del ESP32 de control está implementado y la
+política, la regla y el paquete de histórico ya están desplegados; la repetición
+de las pruebas C++ quedó bloqueada en este equipo por un `PermissionError` al
+leer el compilador Zig de `.pio`. Consultar el estado detallado y los pendientes
+en la [demo completa](docs/Practica-4.md#4-pruebas-y-validaciones).
 
 ## Arquitectura
 
@@ -234,15 +256,18 @@ Entornos disponibles:
 | Sensores | `esp32dev` | ESP-NOW con UID oculto |
 | Sensores | `diagnostic` | ESP-NOW y UID visible solo por USB |
 
-Validación del 24/11/2026: **85 pruebas aprobadas, 0 fallidas, 8 binarios de
-prueba**. Incluyen las 61 pruebas previas y casos de trama inválida, MAC, ACK,
-reintentos, colas, duplicados, orden, sesiones, heartbeat, timeout, RFID y
-confirmación previa. Los cinco entornos PlatformIO compilaron correctamente.
+Línea base: **85 pruebas aprobadas, 0 fallidas, 8 binarios de prueba**, con
+casos de trama inválida, MAC, ACK, reintentos, colas, duplicados, orden,
+sesiones, heartbeat, timeout, RFID y confirmación previa. Tras añadir la
+telemetría se documentaron **91/91 pruebas C++ y 6/6 compilaciones**; en este
+equipo no fue posible repetir la suite C++ por el `PermissionError` indicado
+arriba. No se han modificado los firmwares en este cierre.
 
 ## Carga y prueba física integrada en Windows
 
-La carga no se ejecutó durante esta fase. Cuando se autorice, conectar una placa
-por vez, identificar su COM en VS Code/PlatformIO y usar:
+El repositorio no incluye registro de la carga ni salida del monitor serie de
+las placas actualizadas. Para repetirla, conectar una placa por vez, identificar
+su COM en VS Code/PlatformIO y usar:
 
 ```powershell
 & $pio run -d firmware/esp32_control -e esp32dev -t upload --upload-port COM_CONTROL
@@ -268,21 +293,26 @@ Procedimiento recomendado:
 9. registrar resultados reales; la compilación no demuestra alcance de radio,
    movimiento, posición, fuerza ni seguridad del montaje.
 
-## Preparación para AWS y pendientes
+## Estado AWS y pendientes
 
-ESP32 #1 será el único nodo conectado a AWS. El adaptador traducirá los estados
-internos a `puerta`, `cerradura`, `modo` y `autocierre_s` en Shadow y los
-eventos a `tipo`, `origen`, `resultado` y sus atributos en DynamoDB. El
+ESP32 #1 es el único nodo previsto para AWS. `AwsTelemetry` traduce los estados
+internos a `puerta`, `cerradura`, `modo` y `autocierre_s` en Shadow y los eventos
+a `tipo`, `origen`, `resultado` y sus atributos en DynamoDB. El
 [contrato y las configuraciones](docs/Practica-4.md#27-contrato-del-device-shadow)
 mantienen los nombres externos en español.
 
-El adaptador deberá validar la coexistencia del canal ESP-NOW con el del punto
-de acceso y configurar reloj, MQTT/TLS y sincronización de Shadow. Las claves
-PMK/LMK se configuran fuera de Git. El bloqueo remoto debe pasar por
-`ControlLinkManager::requestLock()`. Un retorno exitoso puede indicar que
-la confirmación está pendiente, por lo que se debe esperar la transición o
-determinar el rechazo o vencimiento antes de responder en Shadow.
+La verificación del 24/11/2026 confirmó Shadow actualizado, lecturas `edge`
+recientes cada ~30 s en DynamoDB e invocaciones de la Lambda de histórico. La
+política v2 y la regla están restringidas a la publicación del Thing. El estado
+publicado es `desconocido` y el `desired` existente sigue sin aplicarse: el
+firmware no se suscribe a `delta` y el servo permanece aislado del control
+remoto. Cualquier habilitación futura del bloqueo remoto debe pasar por
+`ControlLinkManager::requestLock()` y esperar la confirmación o el vencimiento
+antes de responder en Shadow.
 
-Persisten riesgos de clonación RFID, interferencia o pérdida de radio, colas
-agotadas, reinicios, ausencia de realimentación del servo y posible atasco
-mecánico. Deben evaluarse con ambos ESP32 y el montaje real.
+Quedan por demostrar: la identidad del publicador desde el monitor serie, un
+Reed vigente, las frases de Alexa, la repetición real de `eventId` y un mensaje
+inválido en AWS, la deduplicación y la latencia de extremo a extremo. Persisten
+riesgos de clonación RFID, interferencia o pérdida de radio, colas agotadas,
+reinicios, ausencia de realimentación del servo y posible atasco mecánico. Deben
+evaluarse con ambos ESP32 y el montaje real.

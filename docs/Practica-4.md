@@ -4,49 +4,49 @@
 
 **Bases integradas** `cd7ffe9` (ESP-NOW) y `0fe5377` (AWS y entrega) · **Rama de trabajo** `feat/esp32-sensores`
 
-**Estado** ESP-NOW y RFID operativos en el montaje según el equipo. Telemetría MQTT/TLS de solo publicación implementada en el ESP32 de control. Conexión del nuevo binario a AWS y mediciones del montaje pendientes.
+**Estado** ESP-NOW y RFID operativos en el montaje según el equipo. Telemetría MQTT/TLS de solo publicación implementada en el ESP32 de control y con tráfico reciente observado en AWS. El origen del tráfico es compatible con el firmware, pero no está probado por serial ni con un Reed vigente. La actuación remota permanece deshabilitada y las órdenes por voz solo están verificadas con el actuador virtual.
 
 ## 1. Caso de uso y requerimientos
 
 La puerta permite comprobar si está cerrada, autorizar una presentación RFID, consultar el estado por voz y accionar una cerradura de baja tensión. El Reed informa la posición de la puerta. El RC522 reconoce tarjeta y llavero. El SG90 representa la posición del mecanismo de cierre. La Práctica 4 añade histórico de lecturas y movimientos, autocierre en el Edge y consulta y ajuste por voz del modo y del temporizador. El Reed no informa la posición del pestillo y el SG90 no tiene realimentación mecánica en el montaje actual. La estimación publicada se debe comparar con la observación del mecanismo en la demo.
 
-El ESP32 de control es el único cliente AWS previsto para el montaje. El ESP32 de sensores entrega Reed, RFID y latidos por ESP-NOW unicast con protocolo v2. `AwsTelemetry` copia los eventos y los estados de `LockController` y publica en una tarea separada. El bloqueo local conserva la confirmación con `ControlLinkManager`. El firmware físico carece de suscripciones MQTT y las órdenes de voz se prueban con el dispositivo virtual existente.
+El ESP32 de control es el único cliente AWS previsto para el montaje. El ESP32 de sensores entrega Reed, RFID y latidos por ESP-NOW unicast con protocolo v2. `AwsTelemetry` copia los eventos y los estados de `LockController` y publica en una tarea separada. El bloqueo local conserva la confirmación con `ControlLinkManager`. El firmware físico carece de suscripciones MQTT: no aplica `desired` ni mueve el servo por voz. La política activa v2 y la regla desplegada ya están limitadas a la publicación del Thing; el historial y las órdenes de voz se prueban con el dispositivo y actuador virtuales.
 
 ### Matriz RF1–RF15
 
-| RF | Requisito | Implementación y evidencia local | Evidencia pendiente |
+| RF | Requisito | Implementación y evidencia verificable | Evidencia pendiente |
 |---|---|---|---|
-| RF1 | Capturar datos de sensores | `DoorSensor` y `RfidReader` probados en escritorio. El equipo informa funcionamiento local por RFID | Incorporar mediciones supervisadas de polaridad, rebote y presentaciones |
-| RF2 | Reportar sensor y actuador periódicamente | El ESP32 de control implementa publicación por cambio y respaldo cada 30 s. RFID queda como evento de acceso; Reed y cerradura estimada quedan en `reported` | Verificar publicación e intervalos desde la placa; decidir con el docente si requiere el último resultado RFID en Shadow |
-| RF3 | Aplicar delta y confirmar en reported | Confirmación ESP-NOW de bloqueo local y recorrido de órdenes con actuador virtual comprobados por separado | Demostrar el recorrido remoto sobre el Thing virtual autorizado |
-| RF4 | Consultar sensor del Thing por voz en español | `EstadoPuertaIntent` consume el campo `puerta` que ahora genera el ESP32 de control | Probar frases en Alexa Console con el Reed publicado desde la placa. La skill no ofrece una consulta de RFID |
-| RF5 | Ordenar movimientos por voz mediante desired | `AbrirIntent` y `CerrarIntent` escriben orden con ID y vencimiento; recorrido comprobado localmente | Verificar voz y confirmación sobre el Thing virtual |
-| RF6 | Consultar el estado del actuador por voz | Lee cerradura estimada de snapshot vigente | Probar frases y cotejar estado estimado con posición real |
-| RF7 | Vincular y persistir entre sesiones | Slot entero y DynamoDB; alta verificada con sustituto | Persistencia en sesiones reales |
-| RF8 | Resolver por usuario y orientar si falta vínculo | Dos usuarios y dos Things simulados; consultas independientes | Probar en Alexa Console con recursos autorizados |
-| RF9 | Comprobar existencia, cambiar y eliminar vínculo | Se probaron alta, sustitución, Thing inexistente y baja | Demostración integrada |
-| RF10 | Regla IoT invoca Lambda con datos del objeto | El firmware genera el tópico de eventos y el contrato de la regla existente, que fue auditada | Autorizar política y proyección SQL corregidas y registrar una invocación desde la placa |
-| RF11 | Validar, enriquecer y almacenar lecturas | Lambda local descarta inválidos, enriquece y escribe condicionalmente | Medir resultados contra DynamoDB y publicaciones reales |
-| RF12 | Historial de movimientos con su origen | El firmware distingue movimientos RFID/Edge de solicitudes rechazadas. Voz tiene evidencia virtual | Capturar cambios locales por RFID y Edge y corroborar los registros. Comprobar voz en el Thing virtual |
-| RF13 | Lógica automática y justificación Edge/Nube | Autocierre y confirmación de cierre por ESP-NOW cubiertos con reloj y enlace simulados | Demostrar topes, cortes y conflictos con voz en el montaje |
-| RF14 | Reportar, consultar y modificar modo y parámetros por voz | El ESP32 reporta modo y tiempo. El cambio y su confirmación se verificaron con el dispositivo virtual | Consultar estados físicos en Alexa y demostrar cambios en el Thing virtual |
-| RF15 | Mockups basados en DynamoDB | [Dos mockups con consultas y decisiones de usuario](mockups-reportes.md) | Incorporar ejemplos anonimizados obtenidos en la demo |
+| RF1 | Capturar datos de sensores | `DoorSensor` y `RfidReader` probados en escritorio. El equipo informa funcionamiento local por RFID. El tráfico AWS reciente reporta `puerta=desconocida`, sin lectura Reed vigente | Medir polaridad, rebote, aciertos y omisiones con el montaje y correlacionarlos con el estado publicado |
+| RF2 | Reportar sensor y actuador periódicamente | Implementado en `AwsTelemetry`. CLI observó 31 lecturas `edge` entre 21:44:18Z y 22:01:46Z a ~30 s y Shadow v28 con `reportado_ms=2026-11-24T21:56:17Z`; RFID queda como evento, no como último estado | Confirmar por monitor serie que el publicador es la placa, obtener un Reed vigente y decidir con el docente si se requiere el último RFID en `reported` |
+| RF3 | Aplicar delta y confirmar en `reported` | Confirmación ESP-NOW del bloqueo local y recorrido de órdenes con actuador virtual comprobados por separado. El firmware publica y no consume delta; el Shadow actual conserva `desired.modo=bloqueado` y `desired.cerradura=desbloqueada` sin aplicar | Demostrar el recorrido remoto sobre el Thing virtual autorizado. No habilitar el consumidor remoto en la placa sin autorización |
+| RF4 | Consultar sensor del Thing por voz en español | `EstadoPuertaIntent` consume `puerta`. La captura `intents.png` acredita el modelo compilado, no una invocación | Probar frases en Alexa Console con un `reported` reciente. La skill no ofrece consulta de RFID |
+| RF5 | Ordenar movimientos por voz mediante `desired` | `AbrirIntent` y `CerrarIntent` escriben orden con ID y vencimiento; recorrido verificado con el actuador virtual | Verificar voz y confirmación sobre el Thing virtual. La actuación física sigue fuera de alcance |
+| RF6 | Consultar el estado del actuador por voz | El backend lee la estimación y distingue `desconocida`; el Shadow actual reporta `cerradura=desconocida` | Probar frases y cotejar la estimación con la posición real observada |
+| RF7 | Vincular y persistir entre sesiones | Tabla `AlexaThingBindings` activa; alta verificada con sustituto y captura `vinculacion.png` de la tabla | Persistencia real entre sesiones de Alexa |
+| RF8 | Resolver por usuario y orientar si falta vínculo | Dos usuarios y dos Things simulados; consultas independientes en pruebas | Probar en Alexa Console con identidades y Things autorizados |
+| RF9 | Comprobar existencia, cambiar y eliminar vínculo | Alta, sustitución, Thing inexistente y baja verificados con sustituto | Demostración integrada con registros autorizados |
+| RF10 | Regla IoT invoca Lambda con datos del objeto | Regla activa con SQL explícita para `chapa/chapa-inteligente-01/events`; CloudWatch muestra invocaciones de `chapa-almacenar-evento` a las 21:44:20Z y 21:47:18Z, entre otras | Capturar la invocación correlacionada con una publicación identificada desde la placa |
+| RF11 | Validar, enriquecer y almacenar lecturas | 31 filas `lectura` con `eventId`, `ingresoTs` y `ttl`; latencia observada `ts`→`ingresoTs` de 0,695–2,413 s. El descarte y la deduplicación se verificaron solo con sustitutos | Repetir un `eventId` real y publicar un mensaje inválido en AWS para medir deduplicación, integridad y descarte |
+| RF12 | Historial de movimientos con su origen | Filas recientes solo `tipo=lectura, origen=edge`. El histórico antiguo tiene tres filas `rfid`; la voz tiene evidencia virtual | Capturar movimientos RFID, Edge y por voz supervisados y corroborar `origen` y `resultado` en cada fila |
+| RF13 | Lógica automática y justificación Edge/Nube | Autocierre y confirmación ESP-NOW implementados y probados con reloj, radio y actuador simulados | Medir topes, cortes y conflictos con voz en el montaje |
+| RF14 | Reportar, consultar y modificar modo y parámetros por voz | Shadow reporta `modo=automatico` y `autocierre_s=10`; el cambio y su confirmación se verificaron con el dispositivo virtual | Consultar estados físicos en Alexa y demostrar cambios en el Thing virtual; el `desired` actual sigue sin aplicarse en la placa |
+| RF15 | Mockups basados en DynamoDB | [Mockups, diccionario de datos y muestra anonimizada real](mockups-reportes.md) | Muestras anonimizadas de la demo integrada con voz, RFID y Edge |
 
 ### Requerimientos no funcionales y aceptación
 
 | Atributo | Meta inicial del grupo o referencia docente | Evidencia actual y prueba faltante |
 |---|---|---|
-| Estabilidad | ≥10 min continuos sin reinicio ni bloqueo | Pendiente. Usar tráfico mixto de lectura, voz y autocierre |
-| Exactitud | Reed: concordancia con posición observada en una serie de ciclos. RFID: medir aciertos, omisiones y repeticiones por presentación dentro del rango de prueba declarado | Pendiente declarar tamaño de muestra, tolerancia y medir ambas entradas |
-| Respuesta a voz | ≤3 s de solicitud a movimiento | El flujo lógico está simulado; medir de Alexa Console al servo con reloj común |
-| Frecuencia | Cambio discreto ≤1 s y respaldo cada 30 s | Diseño inicial. Medir intervalos en Shadow e histórico y ajustar con resultados |
-| Reconexión | Restablecer WiFi/MQTT automáticamente y aplicar `desired` pendiente válido | Simulación de reconciliación; falta corte real y verificación de estado, vencimiento y versión |
-| Integridad | ≥99 % de eventos válidos únicos publicados quedan almacenados, con descarte de inválidos | Pruebas de duplicación y validación locales; contar IDs en una ventana declarada |
-| Latencia de almacenamiento | ≤5 s máximo de publicación a registro | Pendiente. Medir con tiempos sincronizados, diferenciando la espera offline |
+| Estabilidad | ≥10 min continuos sin reinicio ni bloqueo | 31 publicaciones en ~17,5 min muestran continuidad del publicador, sin reinicios observados en esa ventana. Falta tráfico mixto con voz y autocierre |
+| Exactitud | Reed: concordancia con posición observada en una serie de ciclos. RFID: medir aciertos, omisiones y repeticiones por presentación dentro del rango de prueba declarado | Pendiente declarar tamaño de muestra, tolerancia y medir ambas entradas. El estado reciente es `desconocida` |
+| Respuesta a voz | ≤3 s de solicitud a movimiento | El flujo lógico está simulado. No hay invocaciones recientes de la Lambda de Alexa; medir de Alexa Console al servo con reloj común |
+| Frecuencia | Cambio discreto ≤1 s y respaldo cada 30 s | Respaldo observado cada ~30 s en 31 lecturas. El reporte por cambio y el plazo de 1 s siguen sin medirse |
+| Reconexión | Restablecer WiFi/MQTT automáticamente y aplicar `desired` pendiente válido | Simulación de reconciliación; el `desired` real sigue pendiente en Shadow. Falta corte real y verificación de vencimiento y versión |
+| Integridad | ≥99 % de eventos válidos únicos publicados quedan almacenados, con descarte de inválidos | 31 IDs únicos en la ventana consultada; sin denominador completo ni repetición real. Deduplicación y descarte validados solo con sustitutos |
+| Latencia de almacenamiento | ≤5 s máximo de publicación a registro | En 31 filas, `ingresoTs − ts` osciló entre 0,695 y 2,413 s. No mide el recorrido desde el sensor ni la espera offline |
 | Reacción automática | Medir desde vencimiento del temporizador con Reed vigente hasta movimiento | Reloj simulado. Medir físicamente y reportar aparte los segundos configurados |
-| Operación offline | RFID, interbloqueos y autocierre local operativos mientras el Reed esté vigente; cola de eventos acotada | Pruebas del controlador con lecturas simuladas. Falta implementar y medir la cola y comprobar el corte de Internet con enlace local activo |
-| Costo | Estimar consumo de IoT, Lambda y DynamoDB, considerando el beneficio del proyecto | Calculado en §5; falta validar consumo y beneficio aplicable |
-| Seguridad y calidad | TLS, plantilla sin secretos, roles documentados y módulos separados | Configuración propuesta y fuentes locales revisados. Falta aprovisionamiento seguro, verificación de TLS y revisar IDs RFID de prototipo antes de uso real |
+| Operación offline | RFID, interbloqueos y autocierre local operativos mientras el Reed esté vigente; cola de eventos acotada | Pruebas del controlador con lecturas simuladas. Falta medir la cola y comprobar el corte de Internet con enlace local activo |
+| Costo | Estimar consumo de IoT, Lambda y DynamoDB, considerando el beneficio del proyecto | Calculado en §5; falta validar consumo real y beneficio aplicable |
+| Seguridad y calidad | TLS, plantilla sin secretos, roles documentados y módulos separados | Política v2 limitada a `Connect` y publicación; regla limitada al Thing. La cabecera privada local contiene credenciales y está excluida de Git. Falta verificar TLS desde la placa y revisar UID de prototipo antes de uso real |
 
 ## 2. Análisis y diseño
 
@@ -297,8 +297,8 @@ Skill existente **chapa inteligente**, locale `es-MX`. El [modelo original](../a
 ## 3. Desarrollo e implementación
 
 - `firmware/esp32_sensors`: Reed, RFID, latidos y respuestas de estado. `firmware/esp32_control`: autorización, servo y confirmación asíncrona del cierre. `shared/Protocol`: tramas v2, sesiones, ACK, deduplicación y transporte ESP-NOW. El adaptador AWS deberá mapear `Mode::BLOCKED` a `bloqueado`, `Event.sequence` a `seq` y los demás enums al contrato externo. El estado de ejecución viene de `Event.result` y el ID persistente de telemetría se genera aparte de la secuencia local.
-- [Configuración auditada y sanitizada](../aws/config/deployed-sanitized.json): Thing, ARN de política observado con cuenta omitida, regla, runtime y handler de ambas Lambdas, permisos de invocación, rol de ejecución y definiciones de tablas. La acción IoT usa un permiso basado en el recurso Lambda. La auditoría no identificó un rol de ejecución de regla para esta acción.
-- [Política IoT propuesta](../aws/config/iot-policy.proposed.json): delimita cliente, publicaciones, suscripciones y recepción. La política vigente v1 tiene los ARN incorrectos. [Roles propuestos](../aws/config/lambda-roles.proposed.json): separan escrituras de histórico, operaciones de vinculación, Shadow y logs. El despliegue auditado usa `PowerUserRole`; su amplitud se documenta en la exportación. Las propuestas usan marcadores y requieren revisión antes de aplicarse.
+- [Configuración observada y sanitizada](../aws/config/deployed-sanitized.json): Thing, política v2 con cuenta omitida, regla activa con SQL explícita, runtime y handler de ambas Lambdas, hashes observados, permisos de invocación, rol de ejecución y definiciones de tablas. La acción IoT usa un permiso basado en el recurso Lambda. La auditoría no identificó un rol de ejecución de regla para esta acción.
+- [Política IoT propuesta](../aws/config/iot-policy.proposed.json): referencia histórica con suscripciones y recepción. La política vigente v2 es de solo publicación y ya cubre los dos tópicos usados por el firmware. [Roles propuestos](../aws/config/lambda-roles.proposed.json): separan escrituras de histórico, operaciones de vinculación, Shadow y logs; siguen sin aplicarse. El despliegue usa `PowerUserRole`; su amplitud se documenta en la exportación.
 - [Plantilla C++ del ESP32](../firmware/esp32_control/include/aws_telemetry_config.example.h): copiar a `aws_telemetry_config.h`, excluido de Git. El firmware usa esa cabecera. La plantilla JSON auditada documenta nombres y parámetros y la del laboratorio se usa con el cliente virtual.
 
 ## 4. Pruebas y validaciones
@@ -315,6 +315,19 @@ $pio = "$env:USERPROFILE/.platformio/penv/Scripts/platformio.exe"
 
 La suite nueva [`test_aws_integration.py`](../tests/test_aws_integration.py) importa los handlers locales, sustituye boto3 y simula la proyección de la regla, el control de versión de Shadow, la escritura condicional y el actuador. Cubre órdenes con estado desconocido y obsoleto, conflicto de modo, cierre con puerta abierta, reintentos, límites numéricos, dos usuarios y deduplicación. Los cambios de posición observados corresponden al actuador virtual.
 
+### Verificación AWS en solo lectura del 24/11/2026
+
+AWS CLI no está en el `PATH`; se invocó desde `$env:ProgramFiles\Amazon\AWSCLIV2\aws.exe` con el perfil `puerta-inteligente` y `us-east-2`. No se escribió en ningún recurso. Los comandos y su resultado se detallan en [revision-aws.md](revision-aws.md).
+
+| Servicio | Observación verificada |
+|---|---|
+| Shadow clásico | `chapa-inteligente-01` devolvió versión 28. `reported` con `puerta=desconocida`, `cerradura=desconocida`, `modo=automatico`, `autocierre_s=10` y `reportado_ms=1795557376854` (`2026-11-24T21:56:17.654Z`), 12 s antes de la consulta. `desired` conserva `modo=bloqueado` y `cerradura=desbloqueada`; hay `delta` pendiente porque el firmware no suscribe ni aplica órdenes |
+| DynamoDB | Consulta consistente por `thingName`: 31 filas `tipo=lectura`, `origen=edge`, `resultado=ejecutado` y `puerta=desconocida` entre 21:44:18Z y 22:01:46Z, a intervalos de ~30 s. Cada fila tiene `eventId`, `ingresoTs` y `ttl`. Las tres filas antiguas son `tipo=acceso, origen=rfid` de los días 23 y 24 |
+| CloudWatch Logs | `/aws/lambda/chapa-almacenar-evento` registra START/REPORT continuos desde 21:44:20Z hasta 21:54:47Z en la ventana consultada, con duraciones de 25–2778 ms. `/aws/lambda/chapa-skill-alexa` no registró invocaciones después de las 03:30Z |
+| Configuración AWS | Política activa v2, restringida a `client/chapa-inteligente-01` y a dos tópicos de publicación. Regla activa con SQL explícita para `chapa/chapa-inteligente-01/events`. `chapa-almacenar-evento` tiene `CodeSha256=OwGJItvs…`, distinto del valor auditado antes; `chapa-skill-alexa` conserva el valor previo. TTL de `ChapaHistory` habilitado en `ttl` |
+
+El formato de `eventId` y la ausencia de `diferido` son compatibles con el publicador del ESP32, y la temporización coincide con `REPORT_MS = 30000`. Esa compatibilidad no identifica al emisor ni demuestra que el Reed esté vigente. Para atribuirlo se necesita el monitor serie y una lectura `abierta`/`cerrada` correlacionada por hora.
+
 **Pendientes de la demo.** Comprobar reconocimiento de frases en Alexa Developer Console, conexión TLS y aplicación real de Shadow, captura con el enlace, recorrido del SG90, exactitud Reed/RFID, estabilidad, respuesta por voz, latencia e integridad de almacenamiento, autocierre, desconexión y recuperación. Obtener capturas y muestras anonimizadas. Ninguna medición física se da por realizada.
 
 ## 5. Resultados y estimación mensual
@@ -327,6 +340,8 @@ La suite nueva [`test_aws_integration.py`](../tests/test_aws_integration.py) imp
 | Pruebas previas del backend auditado | **37 casos simulados**. Sirven de línea base para slots, formato de solicitudes y defectos observados antes de las correcciones |
 | Compilación PlatformIO del merge ESP-NOW | **5/5** como línea base, antes del entorno `aws_telemetry` |
 | Histórico auditado en DynamoDB | Tres filas leídas para el Thing en una consulta limitada. Las tres tenían `tipo`, `origen`, `resultado` y `puerta`. Una incluía `cerradura` y una incluía `seq` y `diferido`. Se registraron atributos y tipos; esta evidencia no atribuye origen físico ni mide rendimiento |
+| Verificación AWS del 24/11/2026 | 31 lecturas `edge` recientes a ~30 s, Shadow actualizado 12 s antes de la consulta con estado desconocido, invocaciones recientes de la Lambda de histórico y TTL activo. Latencia `ts`→`ingresoTs` de 0,695–2,413 s. No hay invocaciones recientes de Alexa ni evidencia de Reed vigente |
+| Pruebas repetidas al cierre | **25/25 pruebas Python** con `paho-mqtt==2.1.0` y OpenSSL de Git en el `PATH`, incluida la prueba MQTT/TLS en loopback. El ejecutable de C++ no pudo relanzarse por `PermissionError` al leer `.pio/host-tools/ziglang/zig.exe`; se conserva el resultado histórico de 91/91, no se reclama una repetición |
 
 **Escenario mensual.** Un ESP32 conectado 30 días, un respaldo cada 30 s, 100 eventos adicionales diarios, aproximadamente 270.000 mensajes MQTT, 89.400 operaciones de Shadow para las publicaciones periódicas y de cambio, 89.400 reglas y acciones, 90.000 invocaciones Lambda de 128 MB y 200 ms, unas 90.000 escrituras bajo demanda y 2.000 unidades de lectura. A tarifas públicas de referencia, el núcleo cuesta aproximadamente **USD 0,52/mes** antes de créditos, logs, impuestos y tráfico adicional de reconexión. Los conteos de IoT están por debajo de las referencias publicadas de 500.000 mensajes, 225.000 operaciones Shadow y 250.000 reglas/acciones cuando aplica ese beneficio. Lambda queda por debajo de 1 millón de solicitudes y 400.000 GB·s. Las tablas están bajo demanda: las cuotas de capacidad aprovisionada no se descuentan de estas solicitudes. El proyecto debe confirmar su plan y consumo antes de informar un costo efectivo. [IoT Core](https://aws.amazon.com/iot-core/pricing/) · [Lambda](https://aws.amazon.com/lambda/pricing/) · [DynamoDB](https://aws.amazon.com/dynamodb/pricing/)
 
@@ -355,17 +370,17 @@ El [cliente de telemetría](../aws/virtual_device/telemetry.py) y la
 
 **Configuración y firmware.** Mantener el ESP32 de sensores con su binario ESP-NOW actual. Copiar la plantilla C++ para el ESP32 de control, configurar SSID, contraseña, BSSID del AP fijo de 2,4 GHz, URI ATS `mqtts://…:8883`, Thing, CA, certificado y clave en PEM y habilitar `ENABLED`. Mantener la misma configuración ESP-NOW de ambos peers. Compilar exclusivamente para el controlador con `pio run -d firmware/esp32_control -e aws_telemetry`. El binario por defecto sigue siendo la variante local; el nuevo entorno también arranca localmente si falta configuración privada. Mantener fuera del repositorio la cabecera privada y el binario que contiene las credenciales.
 
-**Cambios AWS pendientes de autorización.** Aplicar la [política de solo publicación](../aws/config/iot-policy.telemetry-only.proposed.json) al certificado del controlador, después de verificar sus asociaciones. Mantener Thing, regla y tabla. Adoptar la proyección explícita de la [regla propuesta](../aws/config/iot-rule.proposed.json) y desplegar el paquete corregido de almacenamiento en la función existente para preservar `eventId` y deduplicar. El backend Alexa desplegado reconoce los campos del reporte; para aplicar la comprobación de vigencia del código local se requiere autorizar su actualización. Realizar primero consultas de puerta y cerradura con la skill y el Thing autorizado. Reservar comandos y cambios de configuración por voz para el Thing virtual.
+**Estado de los cambios AWS.** La lectura del 24/11/2026 confirma que ya están aplicados la política de solo publicación (v2), la proyección explícita de la regla limitada a `chapa/chapa-inteligente-01/events` y un paquete nuevo en `chapa-almacenar-evento` (`CodeSha256=OwGJItvs…`). No se han vuelto a aplicar desde esta revisión. Falta correlacionar ese despliegue con el código local para afirmar que la deduplicación corregida está activa, y verificar con el monitor serie que el certificado usado corresponde al ESP32 de control. El backend Alexa sigue con el hash anterior; no se ha autorizado su actualización. Realizar primero consultas de puerta y cerradura con la skill y el Thing autorizado. Reservar comandos y cambios de configuración por voz para el Thing virtual.
 
-**Validación manual.** Con el SG90 aislado durante la prueba remota, comprobar que el AP y ambos peers usan el mismo canal, que el Reed sigue vigente mientras se conecta el cliente y que el enlace se recupera tras desconectar y restablecer el AP. Comprobar un cambio Reed y una lectura periódica en Shadow y DynamoDB, el origen de eventos RFID/Edge, latencia e integridad por ID, y las consultas de Alexa. Probar el servo bajo supervisión con disparos locales. Registrar si se pierden latidos o confirmaciones durante la asociación o si aumenta el contador de descartes. Estas mediciones siguen pendientes.
+**Validación manual.** Con el SG90 aislado durante la prueba remota, comprobar que el AP y ambos peers usan el mismo canal, que el Reed sigue vigente mientras se conecta el cliente y que el enlace se recupera tras desconectar y restablecer el AP. Comprobar un cambio Reed y una lectura periódica en Shadow y DynamoDB, el origen de eventos RFID/Edge, latencia e integridad por ID, y las consultas de Alexa. Probar el servo bajo supervisión con disparos locales. Registrar si se pierden latidos o confirmaciones durante la asociación o si aumenta el contador de descartes. La publicación reciente ya está documentada; estas mediciones físicas siguen pendientes.
 
 ## 6. Conclusiones
 
-El firmware de control ya incorpora la publicación MQTT/TLS de eventos y Shadow. Para la demo integrada faltan la autorización de los cambios AWS, la verificación del nuevo binario en el montaje y la evidencia de persistencia y consultas por voz. La actuación por voz se mantiene en el Thing virtual.
+El firmware de control incorpora la publicación MQTT/TLS de eventos y Shadow y hay tráfico reciente en AWS: Shadow actualizado, 31 lecturas almacenadas e invocaciones de la Lambda de histórico. Eso acredita el flujo de publicación y persistencia, no la lectura física del Reed ni la actuación remota: el estado publicado es `desconocido` y el firmware no aplica `desired`. Para cerrar la demo integrada faltan la atribución del emisor por monitor serie, una lectura vigente, las consultas por voz y las mediciones del montaje. La actuación por voz se mantiene en el Thing virtual.
 
 ## 7. Recomendaciones
 
-Completar la integración con publicación, consulta de un estado reciente y corte WiFi supervisado. Verificar la política y el paquete de almacenamiento antes de conectar el dispositivo. Ejecutar las órdenes únicamente sobre el Thing virtual.
+Completar la integración con una lectura Reed vigente, consulta por voz de un estado reciente y corte WiFi supervisado. Correlacionar el evento publicado con el monitor serie y conservar la política y el paquete de almacenamiento actuales. Ejecutar las órdenes únicamente sobre el Thing virtual mientras no se autorice explícitamente el control remoto.
 
 ## 8. Anexos
 
@@ -374,4 +389,24 @@ Completar la integración con publicación, consulta de un estado reciente y cor
 - [Pruebas reproducibles con actuador virtual](../tests/test_aws_integration.py).
 - [Guía para revisar el proyecto AWS en solo lectura](revision-aws.md).
 - [Plan de cierre, validación aislada y lista de comprobación física](cierre-practica-4.md).
-- Pendientes las fotografías, capturas de la demo y muestras de histórico vinculadas a IDs de la prueba integrada.
+- Capturas recibidas y su valor probatorio: inventario al final de este documento.
+
+### Inventario de capturas recibidas
+
+Las 11 imágenes de `evidencias/` se revisaron una por una; ninguna muestra una invocación de Alexa, un Reed vigente, un servo en movimiento ni una medición de latencia física.
+
+| Captura | Acredita | No acredita |
+|---|---|---|
+| `thing.png` | Thing `chapa-inteligente-01` y su vista general | Certificado activo, conectividad en vivo ni canal WiFi |
+| `vinculacion.png` | Tabla `AlexaThingBindings`, clave `userId`, capacidad bajo demanda | Pares usuario-Thing, alta real ni persistencia entre sesiones |
+| `shadow.png` | Estado de ejemplo con `puerta=cerrada` y delta pendiente | Hora de la captura, vigencia del dato ni origen físico |
+| `reglasIOT.png` | Regla activa, tópico `chapa/+/events` y acción Lambda | SQL actual ni invocación real; AWS hoy muestra una regla más restrictiva |
+| `politicaIOT.png` | Existencia de la política y versión activa 1 en ese momento | ARN correctos; AWS hoy muestra la versión 2 |
+| `lambdaAlmacenamiento.png` | Función de histórico, rol y desencadenador IoT | Código desplegado ni hash; AWS hoy muestra otro hash |
+| `lambdaCodigoAlmacenamiento.png` | Código local de validación del histórico | Que ese código esté desplegado |
+| `registrosAlmacenados.png` | Tres filas `rfid` en DynamoDB con `resultado` y `puerta` | Eventos recientes, latencia ni integridad |
+| `dynamoHistorico.png` | Vista de `ChapaHistory` y tres elementos | Origen de las filas ni medición de rendimiento |
+| `intents.png` | 15 intents del modelo y build correcto del 23/11/2026 | Ejecución de frases ni respuestas de Alexa |
+| `modoOperacion.png` | Slot `ModoOperacion` con sinónimos | Cambio de modo por voz ni aplicación en la placa |
+
+Sigue pendiente la captura de la verificación AWS en solo lectura (Shadow, DynamoDB y CloudWatch) con hora UTC, porque los datos consultados por CLI no tienen imagen en `evidencias/`.
