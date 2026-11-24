@@ -1,0 +1,184 @@
+{
+  "region": "us-east-2",
+  "thing": {
+    "thingName": "chapa-inteligente-01",
+    "defaultClientId": "chapa-inteligente-01",
+    "attributes": {},
+    "certificateStatus": "ACTIVE"
+  },
+  "iotPolicy": {
+    "policyName": "chapa-inteligente-01-policy",
+    "defaultVersionId": "1",
+    "policyDocument": {
+      "Version": "2012-10-17",
+      "Statement": [
+        {
+          "Effect": "Allow",
+          "Action": "iot:Connect",
+          "Resource": "arn:aws:iot:us-east-2:ACCOUNT_ID:<REDACTED>"
+        },
+        {
+          "Effect": "Allow",
+          "Action": [
+            "iot:Publish",
+            "iot:Receive"
+          ],
+          "Resource": [
+            "arn:aws:iot:us-east-2:ACCOUNT_ID:<REDACTED>",
+            "arn:aws:iot:us-east-2:ACCOUNT_ID:<REDACTED>"
+          ]
+        },
+        {
+          "Effect": "Allow",
+          "Action": "iot:Subscribe",
+          "Resource": [
+            "arn:aws:iot:us-east-2:ACCOUNT_ID:<REDACTED>",
+            "arn:aws:iot:us-east-2:ACCOUNT_ID:<REDACTED>"
+          ]
+        }
+      ]
+    }
+  },
+  "rule": {
+    "ruleName": "ChapaEventosRule",
+    "ruleDisabled": false,
+    "awsIotSqlVersion": "2016-03-23",
+    "actions": [
+      {
+        "lambda": {
+          "functionArn": "arn:aws:lambda:us-east-2:<ACCOUNT_ID>:function:chapa-almacenar-evento"
+        }
+      }
+    ],
+    "sql": "SELECT topic(2) AS thingName,\n       timestamp() AS ts,\n       *\nFROM 'chapa/+/events'"
+  },
+  "functions": [
+    {
+      "name": "chapa-almacenar-evento",
+      "runtime": "python3.13",
+      "handler": "lambda_function.lambda_handler",
+      "memorySize": 128,
+      "timeout": 3,
+      "role": "PowerUserRole",
+      "codeSha256": "/DFLMKrty2bWhO7qj94B67xoiSCyVJhyLTmOjfgR2c0="
+    },
+    {
+      "name": "chapa-skill-alexa",
+      "runtime": "python3.13",
+      "handler": "lambda_function.lambda_handler",
+      "memorySize": 128,
+      "timeout": 10,
+      "role": "PowerUserRole",
+      "codeSha256": "M9wpEQB7WdARiEAQYwSmNK+jQUpjOWoCd4M5EOotWKY="
+    }
+  ],
+  "executionRole": {
+    "name": "PowerUserRole",
+    "trust": {
+      "Version": "2012-10-17",
+      "Statement": [
+        {
+          "Effect": "Allow",
+          "Principal": {
+            "Service": "lambda.amazonaws.com"
+          },
+          "Action": "sts:AssumeRole"
+        }
+      ]
+    },
+    "attachedPolicyDocument": {
+      "Version": "2012-10-17",
+      "Statement": [
+        {
+          "Effect": "Allow",
+          "NotAction": [
+            "iam:*",
+            "organizations:*",
+            "account:*"
+          ],
+          "Resource": "*"
+        },
+        {
+          "Effect": "Allow",
+          "Action": [
+            "account:GetAccountInformation",
+            "account:GetGovCloudAccountInformation",
+            "account:GetPrimaryEmail",
+            "account:ListRegions",
+            "iam:CreateServiceLinkedRole",
+            "iam:DeleteServiceLinkedRole",
+            "iam:ListRoles",
+            "organizations:DescribeEffectivePolicy",
+            "organizations:DescribeOrganization"
+          ],
+          "Resource": "*"
+        }
+      ]
+    }
+  },
+  "invokePermissions": {
+    "history": {
+      "principal": "iot.amazonaws.com",
+      "action": "lambda:InvokeFunction",
+      "sourceArn": "arn:aws:iot:us-east-2:<ACCOUNT_ID>:rule/ChapaEventosRule"
+    },
+    "alexa": {
+      "principal": "alexa-appkit.amazon.com",
+      "action": "lambda:InvokeFunction",
+      "eventSourceToken": "<SKILL_ID>"
+    }
+  },
+  "tables": [
+    {
+      "TableName": "AlexaThingBindings",
+      "BillingMode": "PAY_PER_REQUEST",
+      "AttributeDefinitions": [
+        {
+          "AttributeName": "userId",
+          "AttributeType": "S"
+        }
+      ],
+      "KeySchema": [
+        {
+          "AttributeName": "userId",
+          "KeyType": "HASH"
+        }
+      ],
+      "GlobalSecondaryIndexes": [],
+      "LocalSecondaryIndexes": [],
+      "TimeToLiveDescription": {
+        "TimeToLiveStatus": "DISABLED"
+      }
+    },
+    {
+      "TableName": "ChapaHistory",
+      "BillingMode": "PAY_PER_REQUEST",
+      "AttributeDefinitions": [
+        {
+          "AttributeName": "thingName",
+          "AttributeType": "S"
+        },
+        {
+          "AttributeName": "eventKey",
+          "AttributeType": "S"
+        }
+      ],
+      "KeySchema": [
+        {
+          "AttributeName": "thingName",
+          "KeyType": "HASH"
+        },
+        {
+          "AttributeName": "eventKey",
+          "KeyType": "RANGE"
+        }
+      ],
+      "GlobalSecondaryIndexes": [],
+      "LocalSecondaryIndexes": [],
+      "TimeToLiveDescription": {
+        "TimeToLiveStatus": "ENABLED",
+        "AttributeName": "ttl"
+      }
+    }
+  ]
+}

@@ -1,0 +1,78 @@
+{
+  "trust": {
+    "Version": "2012-10-17",
+    "Statement": [
+      {
+        "Effect": "Allow",
+        "Principal": {
+          "Service": "lambda.amazonaws.com"
+        },
+        "Action": "sts:AssumeRole"
+      }
+    ]
+  },
+  "chapa-almacenar-evento": {
+    "Version": "2012-10-17",
+    "Statement": [
+      {
+        "Effect": "Allow",
+        "Action": "dynamodb:PutItem",
+        "Resource": "arn:aws:dynamodb:us-east-2:<ACCOUNT_ID>:table/ChapaHistory"
+      },
+      {
+        "Effect": "Allow",
+        "Action": "logs:CreateLogGroup",
+        "Resource": "arn:aws:logs:us-east-2:<ACCOUNT_ID>:*"
+      },
+      {
+        "Effect": "Allow",
+        "Action": [
+          "logs:CreateLogStream",
+          "logs:PutLogEvents"
+        ],
+        "Resource": "arn:aws:logs:us-east-2:<ACCOUNT_ID>:log-group:/aws/lambda/chapa-almacenar-evento:*"
+      }
+    ]
+  },
+  "chapa-skill-alexa": {
+    "Version": "2012-10-17",
+    "Statement": [
+      {
+        "Effect": "Allow",
+        "Action": [
+          "dynamodb:GetItem",
+          "dynamodb:PutItem",
+          "dynamodb:DeleteItem"
+        ],
+        "Resource": "arn:aws:dynamodb:us-east-2:<ACCOUNT_ID>:table/AlexaThingBindings"
+      },
+      {
+        "Effect": "Allow",
+        "Action": "iot:DescribeEndpoint",
+        "Resource": "*"
+      },
+      {
+        "Effect": "Allow",
+        "Action": [
+          "iot:DescribeThing",
+          "iot:GetThingShadow",
+          "iot:UpdateThingShadow"
+        ],
+        "Resource": "arn:aws:iot:us-east-2:<ACCOUNT_ID>:thing/chapa-inteligente-*"
+      },
+      {
+        "Effect": "Allow",
+        "Action": "logs:CreateLogGroup",
+        "Resource": "arn:aws:logs:us-east-2:<ACCOUNT_ID>:*"
+      },
+      {
+        "Effect": "Allow",
+        "Action": [
+          "logs:CreateLogStream",
+          "logs:PutLogEvents"
+        ],
+        "Resource": "arn:aws:logs:us-east-2:<ACCOUNT_ID>:log-group:/aws/lambda/chapa-skill-alexa:*"
+      }
+    ]
+  }
+}

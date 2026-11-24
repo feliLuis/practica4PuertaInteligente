@@ -1,0 +1,41 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Action": "iot:Connect",
+      "Resource": "arn:aws:iot:us-east-2:<ACCOUNT_ID>:client/chapa-inteligente-01"
+    },
+    {
+      "Effect": "Allow",
+      "Action": "iot:Publish",
+      "Resource": [
+        "arn:aws:iot:us-east-2:<ACCOUNT_ID>:topic/chapa/chapa-inteligente-01/events",
+        "arn:aws:iot:us-east-2:<ACCOUNT_ID>:topic/$aws/things/chapa-inteligente-01/shadow/get",
+        "arn:aws:iot:us-east-2:<ACCOUNT_ID>:topic/$aws/things/chapa-inteligente-01/shadow/update"
+      ]
+    },
+    {
+      "Effect": "Allow",
+      "Action": "iot:Subscribe",
+      "Resource": [
+        "arn:aws:iot:us-east-2:<ACCOUNT_ID>:topicfilter/$aws/things/chapa-inteligente-01/shadow/get/accepted",
+        "arn:aws:iot:us-east-2:<ACCOUNT_ID>:topicfilter/$aws/things/chapa-inteligente-01/shadow/get/rejected",
+        "arn:aws:iot:us-east-2:<ACCOUNT_ID>:topicfilter/$aws/things/chapa-inteligente-01/shadow/update/delta",
+        "arn:aws:iot:us-east-2:<ACCOUNT_ID>:topicfilter/$aws/things/chapa-inteligente-01/shadow/update/accepted",
+        "arn:aws:iot:us-east-2:<ACCOUNT_ID>:topicfilter/$aws/things/chapa-inteligente-01/shadow/update/rejected"
+      ]
+    },
+    {
+      "Effect": "Allow",
+      "Action": "iot:Receive",
+      "Resource": [
+        "arn:aws:iot:us-east-2:<ACCOUNT_ID>:topic/$aws/things/chapa-inteligente-01/shadow/get/accepted",
+        "arn:aws:iot:us-east-2:<ACCOUNT_ID>:topic/$aws/things/chapa-inteligente-01/shadow/get/rejected",
+        "arn:aws:iot:us-east-2:<ACCOUNT_ID>:topic/$aws/things/chapa-inteligente-01/shadow/update/delta",
+        "arn:aws:iot:us-east-2:<ACCOUNT_ID>:topic/$aws/things/chapa-inteligente-01/shadow/update/accepted",
+        "arn:aws:iot:us-east-2:<ACCOUNT_ID>:topic/$aws/things/chapa-inteligente-01/shadow/update/rejected"
+      ]
+    }
+  ]
+}

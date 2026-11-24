@@ -2,12 +2,41 @@
 
 Firmware modular para una cerradura con un ESP32 de control y un ESP32 de
 sensores. Ambos nodos se comunican localmente mediante ESP-NOW en modo WiFi STA,
-sin router ni Internet. El controlador conserva toda la autorización RFID y la
-lógica de cerradura; el nodo de sensores solo observa el Reed y el RC522.
+sin router ni Internet. El controlador conserva la autorización RFID y la
+lógica de cerradura. El nodo de sensores observa el Reed y el RC522.
 
-Esta fase no implementa MQTT, TLS, NTP, AWS IoT Core, Lambda ni Alexa. No se ha
-afirmado funcionamiento físico integrado: las evidencias actuales son pruebas de
-escritorio y compilación con Arduino-ESP32 core 2.0.17.
+El entregable reúne el [informe técnico y la matriz RF1–RF15](docs/Practica-4.md),
+los [mockups RF15](docs/mockups-reportes.md) y la
+[guía de revisión AWS](docs/revision-aws.md). El firmware de las placas y
+la integración AWS se verifican por separado. La demo de esta versión usa
+un dispositivo y un actuador virtuales.
+
+## Ejecución y demostración simulada
+
+Desde la raíz del repositorio, ejecutar con Python 3.13. La demostración
+usa la biblioteca estándar y sustituye boto3, IoT Rules, Shadow, DynamoDB
+y el servo por simuladores. Funciona sin credenciales AWS ni placas conectadas.
+
+```powershell
+python -B -m unittest discover -s tests -p 'test_aws_integration.py' -v
+```
+
+Para mostrar únicamente el recorrido de voz hasta el histórico:
+
+```powershell
+python -B tests/test_aws_integration.py LocalIntegration.test_voice_shadow_virtual_actuator_history_round_trip -v
+```
+
+La prueba genera una solicitud de Alexa, escribe `desired`, verifica que el
+actuador virtual sigue quieto hasta reconciliar el Shadow, confirma en
+`reported` y comprueba una fila de histórico de origen `voz`. La suite completa
+incluye telemetría Reed y RFID, duplicados, comandos incompatibles y
+recuperación tras una desconexión simulada.
+
+Las [compilaciones](#entornos-compilación-y-pruebas) generan binarios locales.
+Las Lambda de AWS están disponibles en el repositorio y se probaron con clientes
+simulados. Quedan pendientes el adaptador MQTT/TLS del ESP32 de control y la
+validación de la [demo completa](docs/Practica-4.md#4-pruebas-y-validaciones).
 
 ## Arquitectura
 
@@ -241,16 +270,18 @@ Procedimiento recomendado:
 
 ## Preparación para AWS y pendientes
 
-ESP32 #1 será el único nodo conectado posteriormente a AWS. Se conserva el
-contrato objetivo `doorState`, `lockState`, `mode`, `autoLockSeconds` y
-`sensorStatus`, junto con eventos `type`, `source`, `result`, `reason`,
-`doorState`, `lockState`, `mode`, `credentialId`, `sequence` y `deferred`.
+ESP32 #1 será el único nodo conectado a AWS. El adaptador traducirá los estados
+internos a `puerta`, `cerradura`, `modo` y `autocierre_s` en Shadow y los
+eventos a `tipo`, `origen`, `resultado` y sus atributos en DynamoDB. El
+[contrato y las configuraciones](docs/Practica-4.md#27-contrato-del-device-shadow)
+mantienen los nombres externos en español.
 
-Antes de esa integración faltan: elegir credenciales PMK/LMK fuera de Git,
-validar coexistencia del canal ESP-NOW con el canal WiFi, diseñar
-reaprovisionamiento seguro, persistencia y reloj, y recién después incorporar
-WiFi de infraestructura, MQTT/TLS, Device Shadow, Lambda y Alexa. Toda orden de
-bloqueo remota deberá pasar por `ControlLinkManager::requestLock()`.
+El adaptador deberá validar la coexistencia del canal ESP-NOW con el del punto
+de acceso y configurar reloj, MQTT/TLS y sincronización de Shadow. Las claves
+PMK/LMK se configuran fuera de Git. El bloqueo remoto debe pasar por
+`ControlLinkManager::requestLock()`. Un retorno exitoso puede indicar que
+la confirmación está pendiente, por lo que se debe esperar la transición o
+determinar el rechazo o vencimiento antes de responder en Shadow.
 
 Persisten riesgos de clonación RFID, interferencia o pérdida de radio, colas
 agotadas, reinicios, ausencia de realimentación del servo y posible atasco

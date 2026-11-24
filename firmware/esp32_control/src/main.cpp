@@ -38,6 +38,13 @@ LockController controller(SIMULATION_MODE != 0);
 #if ESPNOW_ENABLED
 ControlLinkManager controlLink(controller, reliableChannel);
 #endif
+#if ESPNOW_ENABLED && defined(AWS_TELEMETRY_ENABLED) && AWS_TELEMETRY_ENABLED
+#include "AwsTelemetry.h"
+AwsTelemetry awsTelemetry;
+#define AWS_PUBLISH_ENABLED 1
+#else
+#define AWS_PUBLISH_ENABLED 0
+#endif
 SerialMonitor monitor;
 
 const char* typeName(EventType type) {
@@ -83,6 +90,9 @@ const char* modeName(Mode mode) {
 }
 
 void onEvent(const Event& event) {
+#if AWS_PUBLISH_ENABLED
+  awsTelemetry.record(event, controller.autoLockSeconds());
+#endif
   Serial.printf("[EVT%s] sequence=%lu source=%s type=%s result=%s reason=%s "
                 "doorState=%s lockState=%s mode=%s credentialId=%s\n",
     event.simulated ? "-SIM" : "", static_cast<unsigned long>(event.sequence),
@@ -196,10 +206,13 @@ void setup() {
 #if ESPNOW_ENABLED
   if (!controlLink.begin()) Serial.println("[BOOT] ESP-NOW disabled: configure a valid peer MAC and channel.");
   printLinkStatus();
+#if AWS_PUBLISH_ENABLED
+  if (!espNowLink.ready() || !awsTelemetry.begin(linkConfig.channel))
+    Serial.println("[BOOT] AWS telemetry disabled; local operation remains available.");
+#endif
 #endif
 #endif
   Serial.println("[BOOT] Door and lock states are unknown. No movement at startup.");
-  Serial.println("[BOOT] AWS integration is unavailable in this phase.");
   printHelp();
 }
 
@@ -218,5 +231,9 @@ void loop() {
 #endif
 #if !SIMULATION_MODE
   servo.update();
+#endif
+#if AWS_PUBLISH_ENABLED
+  awsTelemetry.observe({controller.doorState(), controller.lockState(), controller.mode(),
+                        controller.autoLockSeconds()});
 #endif
 }

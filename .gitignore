@@ -5,3 +5,6 @@
 *.key
 *.crt
 secrets.h
+aws/config/device.local.json
+aws/config/virtual-device.local.json
+**/include/aws_telemetry_config.h

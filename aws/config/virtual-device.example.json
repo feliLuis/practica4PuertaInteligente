@@ -1,0 +1,8 @@
+{
+  "thingName": "chapa-inteligente-9001",
+  "endpoint": "",
+  "port": 8883,
+  "caFile": "",
+  "certificateFile": "",
+  "privateKeyFile": ""
+}
