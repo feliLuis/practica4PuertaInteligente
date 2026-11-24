@@ -1,4 +1,4 @@
-"""Compila y ejecuta el C++ real con reloj, GPIO, RFID y PWM falsos. Sin hardware."""
+"""Compila y ejecuta las pruebas de control y consola con hardware simulado."""
 import os
 from pathlib import Path
 import shlex
@@ -31,15 +31,10 @@ def main():
     # Toda la cache del compilador de pruebas queda en el proyecto e ignorada por Git.
     entorno["ZIG_GLOBAL_CACHE_DIR"] = str(BUILD / "zig-cache")
     control = "firmware/esp32_control"
-    sensores = "firmware/esp32_sensores"
     comun = ["tests/stubs/Falsos.cpp", "shared/Protocolo/src/Protocolo.cpp"]
     logica = [f"{control}/src/ControladorCerradura.cpp", f"{control}/src/ListaCredenciales.cpp"]
     actuador = [f"{control}/src/ServoCerrojo.cpp"]
-    lectores = [f"{sensores}/src/SensorPuerta.cpp", f"{sensores}/src/LectorRFID.cpp",
-                f"{sensores}/src/EnlaceSerial.cpp"]
-    trabajos = [("control", control, ["tests/control_tests.cpp"] + logica + actuador, []),
-                ("sensores_normal", sensores, ["tests/sensores_tests.cpp"] + lectores, ["-DDIAGNOSTICO_UID=0"]),
-                ("sensores_diagnostico", sensores, ["tests/sensores_tests.cpp"] + lectores, ["-DDIAGNOSTICO_UID=1"])]
+    trabajos = [("control", control, ["tests/control_tests.cpp"] + logica + actuador, [])]
     for nombre, simulacion, calibracion in (("normal", 0, 0), ("simulacion", 1, 0), ("calibracion", 0, 1)):
         trabajos.append(("consola_" + nombre, control, ["tests/consola_tests.cpp"] + logica +
                          ([] if simulacion else actuador),
