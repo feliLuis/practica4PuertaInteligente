@@ -2,7 +2,7 @@
 
 Firmware modular para dos ESP32 de 38 pines. Esta fase contiene lógica local,
 sensores y diagnósticos individuales. **No contiene ESP-NOW, WiFi, MQTT, NTP,
-AWS ni comunicación real entre placas.** `EnlaceSerial` solo imprime mensajes
+AWS ni comunicación real entre placas.** `SerialLink` solo imprime mensajes
 en el USB del ESP32 de sensores; no implementa UART entre dispositivos.
 
 No se ha cargado este firmware ni se han ejecutado pruebas físicas durante
@@ -24,7 +24,7 @@ No se declara cumplimiento completo de la Práctica 4.
 - La puerta se observa con el Reed; la cerradura es una **estimación por orden PWM**.
 - Al arrancar, puerta y cerradura son desconocidas. No se conecta PWM ni se ordena movimiento.
 - El servo se desacopla 700 ms después de la última orden. Esto **no garantiza retención mecánica**.
-- `ServoCerrojo` valida GPIO, posiciones, retorno de `attach()` y estado `attached()`.
+- `LockServo` valida GPIO, posiciones, retorno de `attach()` y estado `attached()`.
   Solo después de aceptar la orden el controlador cambia su estimación.
   `write()` no devuelve confirmación eléctrica o mecánica: estos controles no demuestran
   que el eje alcanzó su posición ni detectan un atasco o una alimentación insuficiente.
@@ -65,10 +65,10 @@ la segunda placa y la polaridad del Reed.
 
 ## Arquitectura
 
-- `firmware/esp32_control`: `ControladorCerradura`, `ListaCredenciales`,
-  `ServoCerrojo`, eventos y monitor serie incremental.
-- `firmware/esp32_sensores`: `SensorPuerta`, `LectorRFID` y salida `EnlaceSerial`.
-- `shared/Protocolo`: contrato compacto existente e interfaz `EnlaceLocal`,
+- `firmware/esp32_control`: `LockController`, `CredentialList`,
+  `LockServo`, eventos y monitor serie incremental.
+- `firmware/esp32_sensors`: `DoorSensor`, `RfidReader` y salida `SerialLink`.
+- `shared/Protocol`: contrato compacto existente e interfaz `LocalLink`,
   conservados para la próxima fase.
 - `tests`: ejecutables de escritorio que compilan las clases reales con reloj,
   GPIO, PWM y lector falsos. Nunca acceden al hardware.
@@ -85,8 +85,8 @@ Un UID desconocido genera un acceso rechazado sin mover el servo.
 Ambas credenciales se rechazan en modo bloqueado. Ninguna bloquea ni alterna
 la cerradura; repetir una credencial con la cerradura ya desbloqueada conserva
 el estado sin mover el servo ni reiniciar el autocierre.
-Las constantes son `UID_TARJETA`, `UID_LLAVERO`, sus respectivas longitudes,
-`ID_TARJETA` e `ID_LLAVERO`. La lista rechaza registros con acción de bloqueo.
+Las constantes son `CARD_UID`, `KEYFOB_UID`, sus respectivas longitudes,
+`CARD_ID` e `KEYFOB_ID`. La lista rechaza registros con acción de bloqueo.
 El bloqueo corresponde a Alexa (integración futura), al autocierre automático
 o a comandos de diagnóstico habilitados para su entorno.
 El UID no constituye autenticación segura para una cerradura comercial.
@@ -130,8 +130,8 @@ Modo, parámetros, secuencias y estados son locales a RAM; no se persisten al re
 
 ## Eventos locales
 
-Cada `Evento` contiene tipo, origen, resultado, motivo, puerta, cerradura estimada,
-modo, `credentialId`, secuencia local y marca `simulado`.
+Cada `Event` contiene tipo, origen, resultado, motivo, puerta, cerradura estimada,
+modo, `credentialId`, secuencia local y marca `simulated`.
 Los textos y el estado se copian dentro del evento, sin depender de punteros al UID.
 
 - `acceso`: un resultado por presentación RFID.
@@ -151,7 +151,7 @@ la identidad persistente y la adaptación al contrato AWS corresponden a fases f
 ## Compilación en VS Code / PlatformIO
 
 Para usar las tareas de PlatformIO IDE, abrir en VS Code la carpeta
-`firmware/esp32_control` o `firmware/esp32_sensores`, según la placa.
+`firmware/esp32_control` o `firmware/esp32_sensors`, según la placa.
 Seleccionar el entorno y su tarea **Build** en Project Tasks.
 También se puede abrir la raíz del repositorio y usar su terminal con los comandos siguientes.
 No usar **Upload**, **Upload and Monitor** ni **Debug** durante esta fase.
@@ -171,9 +171,9 @@ Desde la raíz del repositorio, en PowerShell:
 $pio = "$env:USERPROFILE\.platformio\penv\Scripts\platformio.exe"
 Test-Path -LiteralPath $pio
 & $pio run -d firmware/esp32_control
-& $pio run -d firmware/esp32_sensores
-& $pio run -d firmware/esp32_control -e simulacion -e calibracion
-& $pio run -d firmware/esp32_sensores -e diagnostico
+& $pio run -d firmware/esp32_sensors
+& $pio run -d firmware/esp32_control -e simulation -e calibration
+& $pio run -d firmware/esp32_sensors -e diagnostic
 ```
 
 Si `pio` está en el PATH también puede usarse directamente.
@@ -184,12 +184,12 @@ No es necesario cambiar el PATH global ni reinstalar PlatformIO.
 | Proyecto / entorno | Uso | Comandos habilitados |
 |---|---|---|
 | Control / `esp32dev` | Normal; sin datos de sensores hasta la próxima fase | `ayuda`, `estado` |
-| Control / `simulacion` | Lógica simulada, sin emitir PWM | Los anteriores y los de simulación listados abajo |
-| Control / `calibracion` | Prueba física explícita, sin simulación | `ayuda`, `estado`, `calibrar 0`, `calibrar 90` |
+| Control / `simulation` | Lógica simulada, sin emitir PWM | Los anteriores y los de simulación listados abajo |
+| Control / `calibration` | Prueba física explícita, sin simulación | `ayuda`, `estado`, `calibrar 0`, `calibrar 90` |
 | Sensores / `esp32dev` | Lecturas individuales, UID oculto en USB | Salida automática |
-| Sensores / `diagnostico` | Lecturas individuales, UID completo solo por USB | Salida automática |
+| Sensores / `diagnostic` | Lecturas individuales, UID completo solo por USB | Salida automática |
 
-Comandos del entorno `simulacion`:
+Comandos del entorno `simulation`:
 
 ```text
 puerta abierta
@@ -217,6 +217,9 @@ El parser usa un búfer de 80 bytes, procesa hasta 64 bytes por vuelta y descart
 líneas excesivas o inválidas hasta el terminador. Acepta LF/CRLF; valida por completo
 los enteros y su desbordamiento. La compilación normal rechaza comandos de simulación.
 El nodo de sensores imprime `[SIM-TX SIN ENLACE]`; su salida no llega al controlador.
+Los comandos, los campos y valores de salida estructurada, los motivos de
+eventos y los identificadores de credenciales conservan su grafía original
+para que las secuencias y lecturas por USB existentes sigan siendo válidas.
 
 ## Pruebas automatizadas sin hardware
 
@@ -242,14 +245,12 @@ PATH o Python global; sus binarios y cachés quedan en `.pio/`, ignorado por Git
 Zig redistribuye un compilador C++ basado en Clang; no es una dependencia del
 firmware ESP32. Fuente del paquete: https://pypi.org/project/ziglang/0.13.0/
 
-Las suites cubren los 18 escenarios prioritarios: interbloqueos, credenciales,
-autocierre con puerta abierta/cerrada, reapertura, pérdida y recuperación,
-modos, idempotencia, parámetros, fallo de accionamiento y estabilización Reed.
-También prueban desbordamiento de reloj, copias de eventos, límites del parser,
-recuperación RFID, privacidad del UID y separación de las tres consolas.
+Las suites actuales cubren interbloqueos, credenciales, autocierre, modos,
+fallos de accionamiento, desbordamiento de reloj, copias de eventos,
+límites del parser y separación de los tres modos de consola.
 Compilan el código real con sustitutos; **no validan físicamente el PWM ni el RC522**.
 
-Validación ejecutada el 24/11/2026: seis suites completadas, **54 ejecuciones
+Validación histórica ejecutada el 24/11/2026: seis suites completadas, **54 ejecuciones
 aprobadas y cero fallidas** (29 de control, 11 de sensores por cada configuración
 y una de consola por cada uno de los tres entornos).
 El código de prueba se compila con C++11, `-Wall -Wextra -Werror`.
@@ -257,8 +258,8 @@ También finalizaron correctamente las cinco compilaciones PlatformIO:
 
 | Proyecto | Entornos compilados | Resultado |
 |---|---|---|
-| Control | `esp32dev`, `simulacion`, `calibracion` | 3 SUCCESS |
-| Sensores | `esp32dev`, `diagnostico` | 2 SUCCESS |
+| Control | `esp32dev`, `simulation`, `calibration` | 3 SUCCESS |
+| Sensores | `esp32dev`, `diagnostic` | 2 SUCCESS |
 
 Se ejecutaron los comandos `run` indicados arriba, sin upload ni acceso a placas.
 La primera compilación de las bibliotecas internas de Zig produjo advertencias
@@ -295,9 +296,9 @@ describen 24 archivos versionados; los otros 13 aparecen con
 `git ls-files --others --exclude-standard`. `git diff --check` no reporta errores.
 Los artefactos `.pio/` se ignoran y no forman parte de los aportes.
 
-La corrección de esta tarea toca `include/config.h`, `src/ControladorCerradura.cpp`
-y `src/ListaCredenciales.cpp` dentro de control, `tests/control_tests.cpp`,
-`tests/consola_tests.cpp` y este README. No se modificaron los sensores ni el
+La corrección de esta tarea toca `include/config.h`, `src/LockController.cpp`
+y `src/CredentialList.cpp` dentro de control, `tests/control_tests.cpp`,
+`tests/console_tests.cpp` y este README. No se modificaron los sensores ni el
 protocolo funcionalmente durante esta corrección.
 Durante la auditoría final se observó una desaparición transitoria de los nueve
 archivos versionados de sensores. Los fuentes y cabeceras reaparecieron con
@@ -318,46 +319,46 @@ cambian esa propiedad. Las eliminaciones pertenecen al responsable del módulo.
 | Integrante | Archivo | Estado |
 |---|---|---|
 | 1 | `firmware/esp32_control/include/Buzzer.h` | D |
-| 1 | `firmware/esp32_control/include/ControladorCerradura.h` | M |
+| 1 | `firmware/esp32_control/include/LockController.h` | M |
 | 1 | `firmware/esp32_control/include/IndicadorAcceso.h` | D |
 | 1 | `firmware/esp32_control/include/Led.h` | D |
-| 1 | `firmware/esp32_control/include/ListaCredenciales.h` | M |
-| 1 | `firmware/esp32_control/include/MonitorSerie.h` | N |
-| 1 | `firmware/esp32_control/include/ServoCerrojo.h` | M |
-| 1 | `firmware/esp32_control/include/Tipos.h` | M |
+| 1 | `firmware/esp32_control/include/CredentialList.h` | M |
+| 1 | `firmware/esp32_control/include/SerialMonitor.h` | N |
+| 1 | `firmware/esp32_control/include/LockServo.h` | M |
+| 1 | `firmware/esp32_control/include/Types.h` | M |
 | 1 | `firmware/esp32_control/include/config.h` | M |
 | 1 | `firmware/esp32_control/platformio.ini` | M |
 | 1 | `firmware/esp32_control/src/Buzzer.cpp` | D |
-| 1 | `firmware/esp32_control/src/ControladorCerradura.cpp` | M |
+| 1 | `firmware/esp32_control/src/LockController.cpp` | M |
 | 1 | `firmware/esp32_control/src/IndicadorAcceso.cpp` | D |
 | 1 | `firmware/esp32_control/src/Led.cpp` | D |
-| 1 | `firmware/esp32_control/src/ListaCredenciales.cpp` | M |
-| 1 | `firmware/esp32_control/src/ServoCerrojo.cpp` | M |
+| 1 | `firmware/esp32_control/src/CredentialList.cpp` | M |
+| 1 | `firmware/esp32_control/src/LockServo.cpp` | M |
 | 1 | `firmware/esp32_control/src/main.cpp` | M |
 | 1 | `tests/control_tests.cpp` | N |
-| 1 | `tests/consola_tests.cpp` | N |
-| 2 | `firmware/esp32_sensores/include/EnlaceSerial.h` | = |
-| 2 | `firmware/esp32_sensores/include/LectorRFID.h` | M |
-| 2 | `firmware/esp32_sensores/include/SensorPuerta.h` | = |
-| 2 | `firmware/esp32_sensores/include/config.h` | M |
-| 2 | `firmware/esp32_sensores/platformio.ini` | M |
-| 2 | `firmware/esp32_sensores/src/EnlaceSerial.cpp` | M |
-| 2 | `firmware/esp32_sensores/src/LectorRFID.cpp` | M |
-| 2 | `firmware/esp32_sensores/src/SensorPuerta.cpp` | M |
-| 2 | `firmware/esp32_sensores/src/main.cpp` | M |
-| 2 | `tests/sensores_tests.cpp` | N |
+| 1 | `tests/console_tests.cpp` | N |
+| 2 | `firmware/esp32_sensors/include/SerialLink.h` | = |
+| 2 | `firmware/esp32_sensors/include/RfidReader.h` | M |
+| 2 | `firmware/esp32_sensors/include/DoorSensor.h` | = |
+| 2 | `firmware/esp32_sensors/include/config.h` | M |
+| 2 | `firmware/esp32_sensors/platformio.ini` | M |
+| 2 | `firmware/esp32_sensors/src/SerialLink.cpp` | M |
+| 2 | `firmware/esp32_sensors/src/RfidReader.cpp` | M |
+| 2 | `firmware/esp32_sensors/src/DoorSensor.cpp` | M |
+| 2 | `firmware/esp32_sensors/src/main.cpp` | M |
+| 2 | `tests/sensores_tests.cpp` (suite histórica retirada) | N |
 | 3 | `.gitignore` | = |
 | 3 | `firmware/esp32_control/.gitignore` | N |
-| 3 | `firmware/esp32_sensores/.gitignore` | N |
-| 3 | `shared/Protocolo/library.json` | = |
-| 3 | `shared/Protocolo/src/EnlaceLocal.h` | = |
-| 3 | `shared/Protocolo/src/Protocolo.cpp` | = |
-| 3 | `shared/Protocolo/src/Protocolo.h` | = |
+| 3 | `firmware/esp32_sensors/.gitignore` | N |
+| 3 | `shared/Protocol/library.json` | = |
+| 3 | `shared/Protocol/src/LocalLink.h` | = |
+| 3 | `shared/Protocol/src/Protocol.cpp` | = |
+| 3 | `shared/Protocol/src/Protocol.h` | = |
 | 3 | `tests/run_tests.py` | N |
-| 3 | `tests/Soporte.h` | N |
+| 3 | `tests/TestSupport.h` | N |
 | 3 | `tests/stubs/Arduino.h` | N |
 | 3 | `tests/stubs/ESP32Servo.h` | N |
-| 3 | `tests/stubs/Falsos.cpp` | N |
+| 3 | `tests/stubs/Fakes.cpp` | N |
 | 3 | `tests/stubs/MFRC522.h` | N |
 | 3 | `tests/stubs/driver/gpio.h` | N |
 | 3 | `README.md` | M |
@@ -384,7 +385,7 @@ Primer aporte del integrante 3: `test: agregar soporte común de pruebas e ignor
 Publicar únicamente la base que necesitan las pruebas de los otros módulos:
 
 ```powershell
-git add -- tests/Soporte.h tests/stubs/Arduino.h tests/stubs/ESP32Servo.h tests/stubs/Falsos.cpp tests/stubs/MFRC522.h tests/stubs/driver/gpio.h firmware/esp32_control/.gitignore firmware/esp32_sensores/.gitignore
+git add -- tests/TestSupport.h tests/stubs/Arduino.h tests/stubs/ESP32Servo.h tests/stubs/Fakes.cpp tests/stubs/MFRC522.h tests/stubs/driver/gpio.h firmware/esp32_control/.gitignore firmware/esp32_sensors/.gitignore
 git diff --cached --check
 git diff --cached --stat
 git diff --cached
@@ -397,7 +398,7 @@ La adaptación pendiente de control es una unidad coherente: API, tipos,
 eliminaciones, monitor, servo, main, configuración y pruebas deben viajar juntos.
 
 ```powershell
-git add -A -- firmware/esp32_control/include firmware/esp32_control/src firmware/esp32_control/platformio.ini tests/control_tests.cpp tests/consola_tests.cpp
+git add -A -- firmware/esp32_control/include firmware/esp32_control/src firmware/esp32_control/platformio.ini tests/control_tests.cpp tests/console_tests.cpp
 git diff --cached --check
 git diff --cached --stat
 git diff --cached
@@ -407,7 +408,7 @@ git commit -m "fix(control): ambas credenciales solo desbloquean"
 Aporte del integrante 2: `feat(sensores): estabilizar Reed y diagnóstico RFID`.
 
 ```powershell
-git add -A -- firmware/esp32_sensores/include firmware/esp32_sensores/src firmware/esp32_sensores/platformio.ini tests/sensores_tests.cpp
+git add -A -- firmware/esp32_sensors/include firmware/esp32_sensors/src firmware/esp32_sensors/platformio.ini
 git diff --cached --check
 git diff --cached --stat
 git diff --cached
@@ -425,7 +426,7 @@ git diff --cached
 git commit -m "test(docs): integrar ejecutor y documentar responsabilidades"
 ```
 
-No se propone un commit vacío para `.gitignore` o `shared/Protocolo`, que no
+No se propone un commit vacío para `.gitignore` o `shared/Protocol`, que no
 tienen cambios. Cuando haya cambios reales de protocolo, seleccionar sus cuatro
 archivos explícitamente y revisarlos con ambos responsables de firmware.
 
@@ -520,13 +521,13 @@ repositorio base; no compartir cuentas ni credenciales.
    transporte ni integración AWS en esta corrección.
 
 `firmware/esp32_control/src/main.cpp` pertenece al integrante 1 y
-`firmware/esp32_sensores/src/main.cpp` al 2: no son el mismo archivo. El integrante
+`firmware/esp32_sensors/src/main.cpp` al 2: no son el mismo archivo. El integrante
 3 coordinará con cada dueño los futuros puntos de conexión de transporte;
 evitar ediciones simultáneas. Lo mismo aplica a cada `include/config.h` y
 `platformio.ini`: compartir versiones y flags, manteniendo responsable por placa.
 No agregar secretos a esas configuraciones.
 
-`Tipos.h` (1), `EnlaceSerial.*` (2), `shared/Protocolo/*` (3) y el soporte de
+`Types.h` (1), `SerialLink.*` (2), `shared/Protocol/*` (3) y el soporte de
 pruebas son dependencias entre equipos. Congelar y revisar firmas, enums,
 longitudes UID, versión y formato de mensaje antes de cambios incompatibles;
 protocolo y consumidores deben integrarse coordinadamente sin romper la base.
@@ -538,7 +539,7 @@ Riesgos pendientes: los UID y los 90° están verificados por software, no en
 hardware; la autorización basada solo en UID no evita clonación. El sensor y
 el controlador todavía no se comunican. Alexa, autenticación de comandos remotos,
 sesiones, ACK/reintentos, persistencia e histórico DynamoDB siguen pendientes.
-La presencia de `Origen::VOZ` o `Origen::NUBE` no autentica un comando.
+La presencia de `Source::VOICE` o `Source::CLOUD` no autentica un comando.
 La consola de simulación es un diagnóstico local y la calibración tiene un
 binario separado; no convertirlas en un acceso remoto sin autorización.
 No cargar firmware ni accionar el montaje como parte de esta revisión.

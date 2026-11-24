@@ -2,27 +2,27 @@
 #include "Arduino.h"
 #include <cstring>
 
-struct SpiFalso {
+struct FakeSpi {
   void begin(int sck, int miso, int mosi, int ss) {
-    Falso::spi[0] = sck; Falso::spi[1] = miso; Falso::spi[2] = mosi; Falso::spi[3] = ss;
+    Fake::spi[0] = sck; Fake::spi[1] = miso; Fake::spi[2] = mosi; Fake::spi[3] = ss;
   }
 };
-extern SpiFalso SPI;
+extern FakeSpi SPI;
 
 class MFRC522 {
 public:
   enum { VersionReg = 0x37 };
   struct Uid { byte size; byte uidByte[10]; } uid{};
   MFRC522(byte, byte) {}
-  void PCD_Init() { ++Falso::inicializacionesRfid; }
-  byte PCD_ReadRegister(int) { return Falso::versionRfid; }
-  bool PICC_IsNewCardPresent() { return Falso::tarjetaPresente; }
+  void PCD_Init() { ++Fake::rfidInitializations; }
+  byte PCD_ReadRegister(int) { return Fake::rfidVersion; }
+  bool PICC_IsNewCardPresent() { return Fake::cardPresent; }
   bool PICC_ReadCardSerial() {
-    if (!Falso::lecturaRfidOk) return false;
-    uid.size = Falso::uidLen;
-    std::memcpy(uid.uidByte, Falso::uid, sizeof(uid.uidByte));
+    if (!Fake::rfidReadOk) return false;
+    uid.size = Fake::uidLen;
+    std::memcpy(uid.uidByte, Fake::uid, sizeof(uid.uidByte));
     return true;
   }
-  void PICC_HaltA() { Falso::tarjetaPresente = false; }
+  void PICC_HaltA() { Fake::cardPresent = false; }
   void PCD_StopCrypto1() {}
 };

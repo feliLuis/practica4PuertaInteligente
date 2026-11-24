@@ -4,12 +4,12 @@
 class Servo {
 public:
   void setPeriodHertz(int) {}
-  int attach(int) { conectado_ = !Falso::falloAttach; return conectado_ ? 1 : 0; }
-  bool attached() const { return conectado_; }
-  void detach() { conectado_ = false; }
-  void write(int angulo) {
-    if (conectado_) { ++Falso::escrituras; Falso::ultimoAngulo = angulo; }
+  int attach(int) { attached_ = !Fake::attachFailure; return attached_ ? 1 : 0; }
+  bool attached() const { return attached_; }
+  void detach() { attached_ = false; }
+  void write(int angle) {
+    if (attached_) { ++Fake::writes; Fake::lastAngle = angle; }
   }
 private:
-  bool conectado_ = false;
+  bool attached_ = false;
 };

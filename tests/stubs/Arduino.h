@@ -1,5 +1,5 @@
 #pragma once
-// Sustitutos de prueba: no acceden a GPIO, puertos USB ni dispositivos.
+// Test doubles avoid accessing GPIO, USB ports, and physical devices.
 #include <stdint.h>
 #include <stdarg.h>
 #include <stdio.h>
@@ -10,40 +10,40 @@ using byte = uint8_t;
 constexpr int LOW = 0;
 constexpr int HIGH = 1;
 constexpr int INPUT_PULLUP = 2;
-namespace Falso {
-extern uint32_t ahora;
-extern int nivel[40];
-extern int modo[40];
-extern bool falloAttach;
-extern int escrituras;
-extern int ultimoAngulo;
-extern byte versionRfid;
-extern bool tarjetaPresente;
-extern bool lecturaRfidOk;
+namespace Fake {
+extern uint32_t now;
+extern int level[40];
+extern int mode[40];
+extern bool attachFailure;
+extern int writes;
+extern int lastAngle;
+extern byte rfidVersion;
+extern bool cardPresent;
+extern bool rfidReadOk;
 extern byte uid[10];
 extern byte uidLen;
-extern int inicializacionesRfid;
+extern int rfidInitializations;
 extern int spi[4];
-void reiniciar();
+void reset();
 }
-inline uint32_t millis() { return Falso::ahora; }
-inline int digitalRead(uint8_t pin) { return Falso::nivel[pin]; }
-inline void pinMode(uint8_t pin, int modo) { Falso::modo[pin] = modo; }
+inline uint32_t millis() { return Fake::now; }
+inline int digitalRead(uint8_t pin) { return Fake::level[pin]; }
+inline void pinMode(uint8_t pin, int mode) { Fake::mode[pin] = mode; }
 
-struct SerieFalsa {
-  std::string salida;
-  std::deque<char> entrada;
+struct FakeSerial {
+  std::string output;
+  std::deque<char> input;
   void begin(uint32_t) {}
-  int available() const { return static_cast<int>(entrada.size()); }
-  int read() { const char c = entrada.front(); entrada.pop_front(); return c; }
-  void println(const char* texto) { salida += texto; salida += '\n'; }
-  void printf(const char* formato, ...) {
+  int available() const { return static_cast<int>(input.size()); }
+  int read() { const char c = input.front(); input.pop_front(); return c; }
+  void println(const char* text) { output += text; output += '\n'; }
+  void printf(const char* format, ...) {
     char buffer[1024];
     va_list argumentos;
-    va_start(argumentos, formato);
-    vsnprintf(buffer, sizeof(buffer), formato, argumentos);
+    va_start(argumentos, format);
+    vsnprintf(buffer, sizeof(buffer), format, argumentos);
     va_end(argumentos);
-    salida += buffer;
+    output += buffer;
   }
 };
-extern SerieFalsa Serial;
+extern FakeSerial Serial;

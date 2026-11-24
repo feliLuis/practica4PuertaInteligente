@@ -1,3 +1,3 @@
 #pragma once
-// Suficiente para los casos de prueba; no sustituye la validacion del SDK real.
+// Minimal test implementation. Validate against the real SDK on the target.
 #define GPIO_IS_VALID_OUTPUT_GPIO(pin) ((pin) < 34)
