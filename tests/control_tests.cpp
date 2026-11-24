@@ -16,6 +16,8 @@ struct Harness {
   Harness() {
     c.onEvent([this](const Event& e) { events.push_back(e); });
     c.onMovement([this](Action) { ++movements; return issueCommand; });
+    // Controller unit tests provide the confirmation boundary synchronously.
+    c.onLockRequest([this](Source source) { c.processAction(Action::LOCK, source); });
   }
   void close() { c.updateDoor(Door::CLOSED, diagnostic); }
   void open() { c.updateDoor(Door::OPEN, diagnostic); }

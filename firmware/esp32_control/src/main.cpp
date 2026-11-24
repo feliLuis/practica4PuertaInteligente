@@ -13,12 +13,31 @@
 #if SIMULATION_MODE && CALIBRATION_MODE
 #error "Simulation and calibration are mutually exclusive."
 #endif
+#if !SIMULATION_MODE && !CALIBRATION_MODE && !defined(HOST_TEST)
+#define ESPNOW_ENABLED 1
+#else
+#define ESPNOW_ENABLED 0
+#endif
 
 #if !SIMULATION_MODE
 #include "LockServo.h"
 LockServo servo(Config::PIN_SERVO, Config::SERVO_DETACH_MS);
 #endif
+#if ESPNOW_ENABLED
+#include <WiFi.h>
+#include <esp_system.h>
+#include "EspNowLink.h"
+#include "EspNowSettings.h"
+#include "ReliableChannel.h"
+#include "ControlLinkManager.h"
+EspNowLink::Config linkConfig = espNowSettings();
+EspNowLink espNowLink(linkConfig);
+ReliableChannel reliableChannel(espNowLink, esp_random() | 1U);
+#endif
 LockController controller(SIMULATION_MODE != 0);
+#if ESPNOW_ENABLED
+ControlLinkManager controlLink(controller, reliableChannel);
+#endif
 SerialMonitor monitor;
 
 const char* typeName(EventType type) {
@@ -82,8 +101,25 @@ void printStatus() {
     controller.autoLockPending() ? "active" : "inactive");
 }
 
+void printLinkStatus() {
+#if ESPNOW_ENABLED
+  const auto& transport = espNowLink.stats(); const auto& reliable = reliableChannel.stats();
+  Serial.printf("localStaMac=%s peerMac=%02X:%02X:%02X:%02X:%02X:%02X channel=%u initialized=%s link=%s encryption=%s rx=%lu tx=%lu invalid=%lu unauthorized=%lu overflow=%lu retries=%lu exhausted=%lu\n",
+    WiFi.macAddress().c_str(), linkConfig.peerMac[0], linkConfig.peerMac[1], linkConfig.peerMac[2],
+    linkConfig.peerMac[3], linkConfig.peerMac[4], linkConfig.peerMac[5], linkConfig.channel,
+    espNowLink.ready()?"yes":"no", reliableChannel.online()?"online":"offline",
+    linkConfig.encryptionEnabled?"enabled":"LAB_UNENCRYPTED",
+    static_cast<unsigned long>(transport.received),static_cast<unsigned long>(transport.sent),
+    static_cast<unsigned long>(transport.invalidFrames),static_cast<unsigned long>(transport.unauthorized),
+    static_cast<unsigned long>(transport.overflows),static_cast<unsigned long>(reliable.retries),
+    static_cast<unsigned long>(reliable.exhausted));
+#else
+  Serial.println("link=unavailable_in_this_build");
+#endif
+}
+
 void printHelp() {
-  Serial.println("Commands: help | status");
+  Serial.println("Commands: help | status | link status");
 #if SIMULATION_MODE
   Serial.println("[SIM WITHOUT PWM] door open|closed | heartbeat | uid HEX");
   Serial.println("unlock | lock | mode manual|automatic|blocked | auto-lock N");
@@ -99,6 +135,7 @@ void printHelp() {
 void processCommand(const char* line) {
   if (strcmp(line, "help") == 0) printHelp();
   else if (strcmp(line, "status") == 0) printStatus();
+  else if (strcmp(line, "link status") == 0) printLinkStatus();
 #if SIMULATION_MODE
   else if (strcmp(line, "door open") == 0)
     controller.updateDoor(Protocol::DoorState::OPEN, Source::DIAGNOSTIC);
@@ -148,6 +185,7 @@ void setup() {
     Serial.println("[SIM] Movement command simulated without PWM.");
     return true;
   });
+  controller.onLockRequest([](Source source) { controller.processAction(Action::LOCK, source); });
 #elif CALIBRATION_MODE
   if (!servo.begin()) Serial.println("[BOOT] Servo configuration failed.");
 #else
@@ -155,9 +193,13 @@ void setup() {
   controller.onMovement([](Action action) {
     return action == Action::UNLOCK ? servo.unlock() : servo.lock();
   });
+#if ESPNOW_ENABLED
+  if (!controlLink.begin()) Serial.println("[BOOT] ESP-NOW disabled: configure a valid peer MAC and channel.");
+  printLinkStatus();
+#endif
 #endif
   Serial.println("[BOOT] Door and lock states are unknown. No movement at startup.");
-  Serial.println("[BOOT] Board-to-board communication and AWS integration are unavailable.");
+  Serial.println("[BOOT] AWS integration is unavailable in this phase.");
   printHelp();
 }
 
@@ -169,7 +211,11 @@ void loop() {
     else if (result == SerialMonitor::Result::INVALID)
       Serial.println("[RX] Discarded line because it was too long or contained invalid characters.");
   }
+#if ESPNOW_ENABLED
+  controlLink.update();
+#else
   controller.update();
+#endif
 #if !SIMULATION_MODE
   servo.update();
 #endif

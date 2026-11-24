@@ -1,54 +1,44 @@
 #include <Arduino.h>
+#include <WiFi.h>
+#include <esp_system.h>
 #include "config.h"
 #include "DoorSensor.h"
 #include "RfidReader.h"
-#include "SerialLink.h"
+#include "EspNowLink.h"
+#include "EspNowSettings.h"
+#include "ReliableChannel.h"
+#include "SensorLinkManager.h"
 
 DoorSensor doorSensor;
-RfidReader rfidReader(Config::RC522_SS, Config::RC522_RST);
-SerialLink serialLink;
-uint32_t sequence = 0;
-uint32_t lastHeartbeat = 0;
+RfidReader rfidReader(Config::RC522_SS,Config::RC522_RST);
+EspNowLink::Config linkConfig=espNowSettings();
+EspNowLink espNowLink(linkConfig);
+ReliableChannel reliableChannel(espNowLink,esp_random()|1U);
+SensorLinkManager sensorLink(reliableChannel);
+uint32_t lastHeartbeat=0;
 
-void sendMessage(Protocol::Type type, const uint8_t* uid = nullptr, uint8_t uidLen = 0) {
-  if ((uidLen != 0 && uidLen != 4 && uidLen != 7 && uidLen != 10) ||
-      (uidLen > 0 && uid == nullptr)) return;
-  Protocol::Message message{};
-  message.version = Protocol::VERSION;
-  message.type = type;
-  message.sequence = ++sequence;
-  message.doorState = doorSensor.state();
-  message.uidLen = uidLen;
-  for (uint8_t i = 0; i < uidLen; ++i) message.uid[i] = uid[i];
-  message.uptimeMs = millis();
-  if (!serialLink.send(message)) Serial.println("[SIM-TX] The simulator rejected the message.");
+void printLinkStatus(){
+ const auto&t=espNowLink.stats();const auto&r=reliableChannel.stats();
+ Serial.printf("localStaMac=%s peerMac=%02X:%02X:%02X:%02X:%02X:%02X channel=%u initialized=%s link=%s encryption=%s rx=%lu tx=%lu invalid=%lu unauthorized=%lu overflow=%lu retries=%lu exhausted=%lu\n",
+  WiFi.macAddress().c_str(),linkConfig.peerMac[0],linkConfig.peerMac[1],linkConfig.peerMac[2],linkConfig.peerMac[3],linkConfig.peerMac[4],linkConfig.peerMac[5],linkConfig.channel,
+  espNowLink.ready()?"yes":"no",reliableChannel.online()?"online":"offline",linkConfig.encryptionEnabled?"enabled":"LAB_UNENCRYPTED",
+  static_cast<unsigned long>(t.received),static_cast<unsigned long>(t.sent),static_cast<unsigned long>(t.invalidFrames),static_cast<unsigned long>(t.unauthorized),static_cast<unsigned long>(t.overflows),static_cast<unsigned long>(r.retries),static_cast<unsigned long>(r.exhausted));
 }
 
-void setup() {
-  Serial.begin(Config::SERIAL_BAUD);
-  serialLink.begin();
-  rfidReader.begin();
-  // Reed switch stabilization starts after the blocking RC522 initialization.
-  doorSensor.begin();
-  lastHeartbeat = millis();
-  Serial.println("[BOOT] The Reed switch state is unknown until the reading is stable for 100 ms.");
-  Serial.println("[BOOT] Simulated serial output only. No communication with ESP32 #1.");
-  Serial.println(Config::SHOW_FULL_UID ? "[DIAG] Full UID output enabled on USB only."
-                                            : "[NORMAL] UID hidden on USB.");
+void setup(){
+ Serial.begin(Config::SERIAL_BAUD);
+ if(!sensorLink.begin())Serial.println("[BOOT] ESP-NOW disabled: configure a valid peer MAC and channel.");
+ rfidReader.begin();doorSensor.begin();lastHeartbeat=millis();
+ Serial.println("[BOOT] Reed is unknown until stable for 100 ms. No UID is logged in normal mode.");
+ Serial.println(Config::SHOW_FULL_UID?"[DIAG] Full UID output enabled on USB only.":"[NORMAL] UID hidden on USB.");
+ printLinkStatus();
 }
 
-void loop() {
-  // Read the switch before any potential waits inside the RC522 library.
-  if (doorSensor.update()) sendMessage(Protocol::Type::REED_STATE);
-  rfidReader.update();
-  uint8_t uid[10];
-  uint8_t length = 0;
-  if (rfidReader.read(uid, sizeof(uid), length))
-    sendMessage(Protocol::Type::RFID_PRESENTED, uid, length);
-
-  const uint32_t now = millis();
-  if (static_cast<uint32_t>(now - lastHeartbeat) >= Config::HEARTBEAT_MS) {
-    lastHeartbeat = now;
-    sendMessage(Protocol::Type::HEARTBEAT);
-  }
+void loop(){
+ sensorLink.update();
+ if(doorSensor.update()){sensorLink.setDoorState(doorSensor.state());sensorLink.sendDoor(doorSensor.state());}
+ rfidReader.update();uint8_t uid[10];uint8_t length=0;
+ if(rfidReader.read(uid,sizeof(uid),length))sensorLink.sendRfid(uid,length,doorSensor.state());
+ uint32_t now=millis();if(uint32_t(now-lastHeartbeat)>=Config::HEARTBEAT_MS){lastHeartbeat=now;sensorLink.sendHeartbeat(doorSensor.state());}
+ if(Serial.available()){char line[16];size_t n=Serial.readBytesUntil('\n',line,sizeof(line)-1);line[n]='\0';if(strcmp(line,"link status")==0)printLinkStatus();}
 }

@@ -15,7 +15,7 @@ constexpr uint8_t RC522_RST = 22;
 
 constexpr uint8_t PIN_REED = 27;
 constexpr uint32_t DEBOUNCE_MS = 100;
-constexpr uint32_t HEARTBEAT_MS = 10000;
+constexpr uint32_t HEARTBEAT_MS = 1000;
 constexpr uint32_t RFID_REPEAT_SUPPRESSION_MS = 1500;
 constexpr uint32_t RFID_RETRY_MS = 5000;
 constexpr uint32_t RFID_CHECK_MS = 1000;

@@ -25,6 +25,10 @@ void LockController::onMovement(std::function<bool(Action)> callback) {
   movementCallback_ = callback;
 }
 
+void LockController::onLockRequest(std::function<void(Source)> callback) {
+  lockRequestCallback_ = callback;
+}
+
 void LockController::emit(Source source, EventType type, bool executed,
                           const char* reason, const char* credentialId) {
   Event event{};
@@ -89,6 +93,14 @@ bool LockController::updateDoor(Protocol::DoorState newDoorState, Source source)
 
 bool LockController::receiveHeartbeat(Protocol::DoorState reading, Source source) {
   return updateDoor(reading, source);
+}
+
+void LockController::invalidateSensor(Source source) {
+  const bool wasOnline = sensorHasData_;
+  sensorHasData_ = false;
+  doorState_ = Protocol::DoorState::UNKNOWN;
+  cancelAutoLock();
+  if (wasOnline) emit(source, EventType::SENSOR, false, "sensor_session_changed");
 }
 
 Result LockController::executeAction(Action action, Source source,
@@ -176,7 +188,8 @@ void LockController::update() {
   }
   if (static_cast<uint32_t>(millis() - autoLockStartedAt_) >= autoLockSeconds_ * 1000UL) {
     cancelAutoLock(); // A failure must not trigger a retry on every loop.
-    processAction(Action::LOCK, Source::EDGE);
+    if (lockRequestCallback_) lockRequestCallback_(Source::EDGE);
+    else emit(Source::EDGE, EventType::REQUEST, false, "lock_confirmation_unavailable");
   }
 }
 

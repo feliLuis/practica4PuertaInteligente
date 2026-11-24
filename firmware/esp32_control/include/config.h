@@ -16,7 +16,13 @@ constexpr int UNLOCK_ANGLE = 90;
 constexpr uint32_t DEFAULT_AUTO_LOCK_SECONDS = 10;
 constexpr uint32_t MIN_AUTO_LOCK_SECONDS = 5;
 constexpr uint32_t MAX_AUTO_LOCK_SECONDS = 120;
-constexpr uint32_t SENSOR_TIMEOUT_MS = 30000;
+// Three missed 1 s heartbeats mark the sensor offline in firmware.
+#ifndef TEST_SENSOR_TIMEOUT_MS
+constexpr uint32_t SENSOR_TIMEOUT_MS = 3000;
+#else
+constexpr uint32_t SENSOR_TIMEOUT_MS = TEST_SENSOR_TIMEOUT_MS;
+#endif
+constexpr uint32_t STATE_CONFIRMATION_TIMEOUT_MS = 750;
 constexpr uint32_t SERVO_DETACH_MS = 700;
 
 constexpr uint32_t SERIAL_BAUD = 115200;
