@@ -374,6 +374,26 @@ class LocalIntegration(unittest.TestCase):
             self.assertEqual(set(policy[action]),
                              {prefix + f"{resource_type}/{shadow}/{suffix}" for suffix in response_suffixes})
 
+    def test_virtual_probe_uses_both_unchanged_lambda_contracts(self):
+        from aws.virtual_device.telemetry import VirtualDevice
+
+        self.assertIn("Solicité", self.invoke("CambiarModoIntent", {"modo": {"value": "manual"}}))
+        self.assertIn("Solicité", self.invoke("CambiarAutocierreIntent", {"segundos": {"value": "21"}}))
+        device = VirtualDevice(THING, clock=lambda: NOW)
+        document = copy.deepcopy(self.cloud.documents[THING])
+        device.receive(f"{device.shadow}/get/accepted", document)
+        self.cloud.update_thing_shadow(thingName=THING, payload=json.dumps(device.report()).encode())
+        self.assertIn("manual", self.invoke("ConsultarModoIntent"))
+        self.assertIn("21 segundos", self.invoke("ConsultarAutocierreIntent"))
+        self.assertIn("no tengo", self.invoke("EstadoCerraduraIntent"))
+        event = device.reading()
+        self.assertEqual(self.publish(event)["statusCode"], 200)
+        duplicate = self.publish(event, NOW + 1000)
+        self.assertTrue(json.loads(duplicate["body"])["duplicado"])
+        row, = self.cloud.history.items.values()
+        self.assertEqual((row["eventId"], row["tipo"], row["puerta"], row["origen"]),
+                         (event["eventId"], "lectura", "cerrada", "edge"))
+
     def test_history_deduplicates_across_rule_timestamps(self):
         first = self.publish(self.sample(thingName="other", ts=1))
         dup = self.publish(self.sample(), NOW + 1000)

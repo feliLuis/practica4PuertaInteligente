@@ -333,6 +333,23 @@ La suite nueva [`test_aws_integration.py`](../tests/test_aws_integration.py) imp
 
 **Escenario mensual.** Un ESP32 conectado 30 días, un respaldo cada 30 s, 100 eventos adicionales diarios, aproximadamente 270.000 mensajes MQTT, 89.400 operaciones de Shadow para las publicaciones periódicas y de cambio, 89.400 reglas y acciones, 90.000 invocaciones Lambda de 128 MB y 200 ms, unas 90.000 escrituras bajo demanda y 2.000 unidades de lectura. A tarifas públicas de referencia, el núcleo cuesta aproximadamente **USD 0,52/mes** antes de créditos, logs, impuestos y tráfico adicional de reconexión. Los conteos de IoT están por debajo de las referencias publicadas de 500.000 mensajes, 225.000 operaciones Shadow y 250.000 reglas/acciones cuando aplica ese beneficio. Lambda queda por debajo de 1 millón de solicitudes y 400.000 GB·s. Las tablas están bajo demanda: las cuotas de capacidad aprovisionada no se descuentan de estas solicitudes. El proyecto debe confirmar su plan y consumo antes de informar un costo efectivo. [IoT Core](https://aws.amazon.com/iot-core/pricing/) · [Lambda](https://aws.amazon.com/lambda/pricing/) · [DynamoDB](https://aws.amazon.com/dynamodb/pricing/)
 
+### Verificación nueva de MQTT/TLS con dispositivo virtual
+
+- **Transporte.** La prueba abrió un socket de loopback con TLS mutuo y certificados X.509 efímeros. El cliente MQTT 3.1.1 esperó la confirmación de suscripción, solicitó el Shadow clásico con `/get`, recibió la configuración, publicó `reported` y recibió el acuse QoS 1 de la lectura. El servidor de prueba simuló las respuestas de AWS IoT. No hubo conexión al proyecto AWS.
+- **Contrato.** Un delta de versión 4 recibido antes de la instantánea de versión 3 se aplicó después de la instantánea. El cliente reportó modo `manual`, autocierre de 21 s, puerta cerrada simulada y cerradura desconocida. Descartó valores inválidos y comandos de movimiento. La prueba con las dos Lambda locales confirmó que Alexa puede leer el estado reportado y que reenviar el mismo ID produce una única fila en el sustituto de DynamoDB. Un PUBACK acredita recepción por el broker.
+- **WiFi y ESP-NOW.** La revisión de `EspNowLink::begin()` confirmó que fija el canal de radio y el del peer. Ambas plantillas seleccionan el canal 1. Para coexistir con WiFi STA, ambos nodos y el punto de acceso de 2,4 GHz deben usar el mismo canal. Queda pendiente comprobarlo con las placas, incluida la reconexión WiFi y la continuidad de latidos y solicitudes de estado. [FAQ de Espressif, §3.7.3](https://docs.espressif.com/projects/esp-faq/en/latest/esp-faq-en-master.pdf)
+- **Resultados nuevos.** **25/25 pruebas Python**, incluida la prueba MQTT con TLS real en loopback, **85/85 pruebas de firmware** y **5/5 compilaciones PlatformIO**. Las dos últimas verifican el firmware existente. El cliente virtual corre en Python y el adaptador MQTT/TLS de las placas sigue pendiente.
+
+Para repetir la verificación local, usar Python 3.13 y OpenSSL en el PATH o indicado en `OPENSSL`:
+
+~~~powershell
+python -m pip install -r aws/virtual_device/requirements.txt
+python -B -m unittest discover -s tests -p 'test_*.py' -v
+~~~
+
+El [cliente de telemetría](../aws/virtual_device/telemetry.py) y la
+[plantilla sin secretos](../aws/config/virtual-device.example.json) quedan listos para un proyecto aislado ya aprovisionado. Cuando se autorice esa prueba, utilizar un Thing de laboratorio `chapa-inteligente-9xxx`, sus propios certificados y permisos limitados a sus tópicos. Completar la configuración en `virtual-device.local.json`, excluido de Git. El endpoint ATS en puerto 8883 requiere el argumento explícito `--allow-isolated-aws`. La persistencia real se verifica por `eventId` en DynamoDB del entorno aislado. [Protocolos de AWS IoT Core](https://docs.aws.amazon.com/iot/latest/developerguide/protocols.html)
+
 ## 6. Conclusiones
 
 El trabajo local confirma los contratos de Alexa, Shadow e histórico con clientes simulados y conserva los recursos que ya existen. El firmware ya incorpora ESP-NOW y confirmación del Reed antes del bloqueo. Para la demo completa falta el adaptador MQTT/TLS, validar la coexistencia del canal WiFi con ESP-NOW y comprobar la posición del mecanismo y el flujo integrado en hardware.
@@ -347,4 +364,5 @@ Completar la integración en una prueba coordinada: publicar un estado reciente,
 - [Exportación sanitizada](../aws/config/deployed-sanitized.json) y [mockups RF15](mockups-reportes.md).
 - [Pruebas reproducibles con actuador virtual](../tests/test_aws_integration.py).
 - [Guía para revisar el proyecto AWS en solo lectura](revision-aws.md).
+- [Plan de cierre, validación aislada y lista de comprobación física](cierre-practica-4.md).
 - Pendientes las fotografías, capturas de la demo y muestras de histórico vinculadas a IDs de la prueba integrada.
