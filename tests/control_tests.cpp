@@ -63,31 +63,33 @@ int main() {
     CHECK(b.c.lockState() == LockState::UNLOCKED);
     CHECK(b.count(EventType::ACCESS) == 1);
     CHECK(b.count(EventType::UNLOCK) == 1);
-    CHECK(std::strcmp(b.events.back().credentialId, "tarjeta-1") == 0);
+    CHECK(std::strcmp(b.events.back().credentialId, "card-1") == 0);
+    CHECK(std::strcmp(b.events.back().reason, "authorized_credential") == 0);
   });
   s.testCase("key fob unlocks without a door reading and preserves the ID", [] {
     Harness b; const uint8_t uid[] = {0x9C, 0x31, 0x8B, 0x06};
     CHECK(std::memcmp(uid, Config::KEYFOB_UID, sizeof(uid)) == 0);
     CHECK(accepted(b.c.processUid(uid, sizeof(uid))));
     CHECK(b.c.lockState() == LockState::UNLOCKED);
-    CHECK(std::strcmp(b.events.back().credentialId, "llavero-1") == 0);
+    CHECK(std::strcmp(b.events.back().credentialId, "keyfob-1") == 0);
+    CHECK(std::strcmp(b.events.back().reason, "authorized_credential") == 0);
     CHECK(b.movements == 1 && b.count(EventType::ACCESS) == 1);
     CHECK(b.count(EventType::UNLOCK) == 1 && b.count(EventType::LOCK) == 0);
   });
   s.testCase("credential list rejects lock actions even on replacement", [] {
-    CredentialList lista;
-    CHECK(!lista.add(Config::KEYFOB_UID, Config::KEYFOB_UID_LENGTH,
+    CredentialList credentials;
+    CHECK(!credentials.add(Config::KEYFOB_UID, Config::KEYFOB_UID_LENGTH,
                             Action::LOCK, Config::KEYFOB_ID));
     Action action = Action::LOCK; const char* id = nullptr;
-    CHECK(!lista.buscar(Config::KEYFOB_UID, Config::KEYFOB_UID_LENGTH, action, id));
-    CHECK(lista.add(Config::KEYFOB_UID, Config::KEYFOB_UID_LENGTH,
+    CHECK(!credentials.find(Config::KEYFOB_UID, Config::KEYFOB_UID_LENGTH, action, id));
+    CHECK(credentials.add(Config::KEYFOB_UID, Config::KEYFOB_UID_LENGTH,
                            Action::UNLOCK, Config::KEYFOB_ID));
-    CHECK(!lista.add(Config::KEYFOB_UID, Config::KEYFOB_UID_LENGTH,
-                            Action::LOCK, "otro-id"));
-    CHECK(!lista.add(Config::KEYFOB_UID, Config::KEYFOB_UID_LENGTH,
+    CHECK(!credentials.add(Config::KEYFOB_UID, Config::KEYFOB_UID_LENGTH,
+                            Action::LOCK, "other-id"));
+    CHECK(!credentials.add(Config::KEYFOB_UID, Config::KEYFOB_UID_LENGTH,
                             static_cast<Action>(255), Config::KEYFOB_ID));
-    CHECK(lista.buscar(Config::KEYFOB_UID, Config::KEYFOB_UID_LENGTH, action, id));
-    CHECK(action == Action::UNLOCK && std::strcmp(id, "llavero-1") == 0);
+    CHECK(credentials.find(Config::KEYFOB_UID, Config::KEYFOB_UID_LENGTH, action, id));
+    CHECK(action == Action::UNLOCK && std::strcmp(id, "keyfob-1") == 0);
   });
   s.testCase("both credentials unlock to 90 in manual and automatic modes without toggling", [] {
     const uint8_t* uids[] = {Config::CARD_UID, Config::KEYFOB_UID};
@@ -100,49 +102,49 @@ int main() {
           return action == Action::UNLOCK ? servo.unlock() : servo.lock();
         });
         CHECK(accepted(b.lock()) && Fake::lastAngle == 0);
-        const int previas = Fake::writes;
+        const int previousWrites = Fake::writes;
         CHECK(accepted(b.c.processUid(uid, 4)));
-        CHECK(Fake::lastAngle == 90 && Fake::writes == previas + 1);
+        CHECK(Fake::lastAngle == 90 && Fake::writes == previousWrites + 1);
         CHECK(b.c.lockState() == LockState::UNLOCKED);
-        for (const uint8_t* repetida : uids) CHECK(accepted(b.c.processUid(repetida, 4)));
-        CHECK(Fake::writes == previas + 1 && b.movements == 2);
+        for (const uint8_t* repeatedUid : uids) CHECK(accepted(b.c.processUid(repeatedUid, 4)));
+        CHECK(Fake::writes == previousWrites + 1 && b.movements == 2);
         CHECK(b.c.lockState() == LockState::UNLOCKED);
         CHECK(b.count(EventType::UNLOCK) == 1 && b.count(EventType::LOCK) == 1);
         CHECK(b.count(EventType::ACCESS) == 3);
       }
     }
   });
-  s.testCase("locked mode rejects both credentials from any state without movement", [] {
+  s.testCase("blocked mode rejects both credentials from any state without movement", [] {
     const uint8_t* uids[] = {Config::CARD_UID, Config::KEYFOB_UID};
-    const char* ids[] = {"tarjeta-1", "llavero-1"};
-    for (int inicial = 0; inicial < 3; ++inicial) {
+    const char* ids[] = {"card-1", "keyfob-1"};
+    for (int initialStateIndex = 0; initialStateIndex < 3; ++initialStateIndex) {
       Harness b; b.close();
-      if (inicial == 1) b.lock();
-      if (inicial == 2) b.unlock();
-      const auto state = b.c.lockState(); const int previos = b.movements;
-      const auto bloqueos = b.count(EventType::LOCK);
-      const auto desbloqueos = b.count(EventType::UNLOCK);
-      b.c.setMode(Mode::LOCKED, diagnostic);
+      if (initialStateIndex == 1) b.lock();
+      if (initialStateIndex == 2) b.unlock();
+      const auto state = b.c.lockState(); const int previousMovements = b.movements;
+      const auto lockEvents = b.count(EventType::LOCK);
+      const auto unlockEvents = b.count(EventType::UNLOCK);
+      b.c.setMode(Mode::BLOCKED, diagnostic);
       for (int i = 0; i < 2; ++i) {
         const auto r = b.c.processUid(uids[i], 4);
-        CHECK(!accepted(r) && std::strcmp(r.reason, "modo_bloqueado") == 0);
+        CHECK(!accepted(r) && std::strcmp(r.reason, "blocked_mode") == 0);
         CHECK(std::strcmp(b.events.back().credentialId, ids[i]) == 0);
         CHECK(b.events.back().result == EventResult::REJECTED);
       }
-      CHECK(b.movements == previos && b.c.lockState() == state);
+      CHECK(b.movements == previousMovements && b.c.lockState() == state);
       CHECK(b.count(EventType::ACCESS) == 2 && !b.c.autoLockPending());
-      CHECK(b.count(EventType::LOCK) == bloqueos);
-      CHECK(b.count(EventType::UNLOCK) == desbloqueos);
+      CHECK(b.count(EventType::LOCK) == lockEvents);
+      CHECK(b.count(EventType::UNLOCK) == unlockEvents);
     }
   });
   s.testCase("repeating or alternating credentials neither moves the lock nor extends auto-lock", [] {
-    for (const uint8_t* inicial : {Config::CARD_UID, Config::KEYFOB_UID}) {
+    for (const uint8_t* initialUid : {Config::CARD_UID, Config::KEYFOB_UID}) {
       Fake::now = 0; Harness b; b.close();
-      CHECK(accepted(b.c.processUid(inicial, 4)));
+      CHECK(accepted(b.c.processUid(initialUid, 4)));
       Fake::now = 9000;
-      for (const uint8_t* uid : {Config::CARD_UID, Config::KEYFOB_UID, inicial}) {
+      for (const uint8_t* uid : {Config::CARD_UID, Config::KEYFOB_UID, initialUid}) {
         const auto r = b.c.processUid(uid, 4);
-        CHECK(accepted(r) && std::strcmp(r.reason, "sin_cambio") == 0);
+        CHECK(accepted(r) && std::strcmp(r.reason, "no_change") == 0);
       }
       CHECK(b.movements == 1 && b.count(EventType::UNLOCK) == 1);
       CHECK(b.count(EventType::ACCESS) == 4 && b.count(EventType::LOCK) == 0);
@@ -202,14 +204,14 @@ int main() {
     Fake::now = 20999; b.c.update(); CHECK(b.movements == 1);
     ++Fake::now; b.c.update(); CHECK(b.movements == 2);
   });
-  s.testCase("locked mode cancels auto-lock without forcing movement and rejects unlock", [] {
+  s.testCase("blocked mode cancels auto-lock without forcing movement and rejects unlock", [] {
     Harness b; b.close(); b.unlock(); b.open();
-    b.c.setMode(Mode::LOCKED, diagnostic);
+    b.c.setMode(Mode::BLOCKED, diagnostic);
     CHECK(!accepted(b.unlock())); CHECK(!b.c.autoLockPending());
     Fake::now = 10000; b.c.update(); CHECK(b.movements == 1);
     CHECK(b.c.lockState() == LockState::UNLOCKED);
     CHECK(!accepted(b.c.setMode(static_cast<Mode>(255), diagnostic)));
-    CHECK(b.c.mode() == Mode::LOCKED);
+    CHECK(b.c.mode() == Mode::BLOCKED);
   });
   s.testCase("repeating unlock neither moves the lock nor restarts the timer", [] {
     Harness b; b.close(); b.unlock(); Fake::now = 9000; b.unlock();
@@ -233,7 +235,7 @@ int main() {
     CHECK(!accepted(b.lock()));
     CHECK(b.c.lockState() == LockState::UNKNOWN);
     CHECK(b.count(EventType::LOCK) == 0);
-    CHECK(std::strcmp(b.events.back().reason, "orden_servo_fallida") == 0);
+    CHECK(std::strcmp(b.events.back().reason, "servo_command_failed") == 0);
     b.c.onMovement(nullptr); CHECK(!accepted(b.unlock()));
   });
   s.testCase("auto-lock failure does not retry each loop", [] {
@@ -254,7 +256,7 @@ int main() {
     Harness b; b.close(); b.unlock(); const auto copy = b.events;
     b.open(); b.c.setMode(Mode::MANUAL, diagnostic);
     for (size_t i = 0; i < b.events.size(); ++i) {
-      CHECK(b.events[i].seq == i + 1 && b.events[i].simulated);
+      CHECK(b.events[i].sequence == i + 1 && b.events[i].simulated);
     }
     CHECK(copy[0].doorState == Door::CLOSED && copy[0].mode == Mode::AUTOMATIC);
     CHECK(copy[0].source == diagnostic && std::strcmp(copy[0].reason, "sensor_online") == 0);
@@ -271,8 +273,8 @@ int main() {
     Fake::attachFailure = true; CHECK(!servo.lock() && Fake::writes == 0);
     Fake::attachFailure = false; CHECK(servo.lock() && Fake::lastAngle == 0);
     Fake::now = 700; servo.update(); Fake::attachFailure = true;
-    CHECK(!servo.unlock()); LockServo invalido(35, 700);
-    CHECK(!invalido.begin() && !invalido.unlock());
+    CHECK(!servo.unlock()); LockServo invalidServo(35, 700);
+    CHECK(!invalidServo.begin() && !invalidServo.unlock());
   });
   s.testCase("servo detaches safely across millis wraparound", [] {
     LockServo servo(13, 700); servo.begin(); Fake::now = UINT32_MAX - 300;
@@ -282,9 +284,9 @@ int main() {
   });
   s.testCase("incremental parser discards overflow and validates complete integers", [] {
     SerialMonitor m;
-    for (char c : std::string("  ESTADO  ")) CHECK(m.receive(c) == SerialMonitor::Result::INCOMPLETE);
+    for (char c : std::string("  STATUS  ")) CHECK(m.receive(c) == SerialMonitor::Result::INCOMPLETE);
     CHECK(m.receive('\r') == SerialMonitor::Result::READY);
-    CHECK(std::strcmp(m.line(), "estado") == 0);
+    CHECK(std::strcmp(m.line(), "status") == 0);
     CHECK(m.receive('\n') == SerialMonitor::Result::INCOMPLETE);
     for (int i = 0; i < 100; ++i) m.receive('a');
     CHECK(m.receive('\n') == SerialMonitor::Result::INVALID);

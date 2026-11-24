@@ -37,14 +37,14 @@ public:
 
   static bool parseUnsigned(const char* text, uint32_t& value) {
     if (text == nullptr || *text == '\0') return false;
-    uint32_t numero = 0;
+    uint32_t parsed = 0;
     for (const char* p = text; *p != '\0'; ++p) {
       if (*p < '0' || *p > '9') return false;
       const uint32_t digit = static_cast<uint32_t>(*p - '0');
-      if (numero > (UINT32_MAX - digit) / 10) return false;
-      numero = numero * 10 + digit;
+      if (parsed > (UINT32_MAX - digit) / 10) return false;
+      parsed = parsed * 10 + digit;
     }
-    value = numero;
+    value = parsed;
     return true;
   }
 

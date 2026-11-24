@@ -10,7 +10,7 @@
 
 class Suite {
 public:
-  template<class Funcion> void testCase(const char* name, Funcion test) {
+  template<class Function> void testCase(const char* name, Function test) {
     Fake::reset();
     try { test(); ++passed_; std::cout << "OK " << name << "\n"; }
     catch (const std::exception& error) {

@@ -16,7 +16,7 @@ void sendMessage(Protocol::Type type, const uint8_t* uid = nullptr, uint8_t uidL
   Protocol::Message message{};
   message.version = Protocol::VERSION;
   message.type = type;
-  message.seq = ++sequence;
+  message.sequence = ++sequence;
   message.doorState = doorSensor.state();
   message.uidLen = uidLen;
   for (uint8_t i = 0; i < uidLen; ++i) message.uid[i] = uid[i];

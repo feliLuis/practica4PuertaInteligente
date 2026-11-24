@@ -7,8 +7,8 @@ constexpr uint8_t CARD_UID[] = {0x39, 0x61, 0xD7, 0x06};
 constexpr uint8_t CARD_UID_LENGTH = sizeof(CARD_UID);
 constexpr uint8_t KEYFOB_UID[] = {0x9C, 0x31, 0x8B, 0x06};
 constexpr uint8_t KEYFOB_UID_LENGTH = sizeof(KEYFOB_UID);
-constexpr const char* CARD_ID = "tarjeta-1";
-constexpr const char* KEYFOB_ID = "llavero-1";
+constexpr const char* CARD_ID = "card-1";
+constexpr const char* KEYFOB_ID = "keyfob-1";
 
 constexpr uint8_t PIN_SERVO = 13;
 constexpr int LOCK_ANGLE = 0;

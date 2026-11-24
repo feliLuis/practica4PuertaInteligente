@@ -8,18 +8,18 @@ namespace Protocol {
 
 const char* name(DoorState state) {
   switch (state) {
-    case DoorState::OPEN: return "abierta";
-    case DoorState::CLOSED: return "cerrada";
-    default: return "desconocida";
+    case DoorState::OPEN: return "open";
+    case DoorState::CLOSED: return "closed";
+    default: return "unknown";
   }
 }
 
 const char* name(Type type) {
   switch (type) {
-    case Type::REED_STATE: return "REED_ESTADO";
-    case Type::RFID_PRESENTED: return "RFID_PRESENTADA";
-    case Type::HEARTBEAT: return "LATIDO";
-    default: return "DESCONOCIDO";
+    case Type::REED_STATE: return "reed_state";
+    case Type::RFID_PRESENTED: return "rfid_presented";
+    case Type::HEARTBEAT: return "heartbeat";
+    default: return "unknown";
   }
 }
 
@@ -47,24 +47,24 @@ bool hexToUid(const char* text, uint8_t* uid, uint8_t capacity, uint8_t& length)
   length = 0;
   if (text == nullptr || uid == nullptr) return false;
 
-  char limpio[32];
+  char sanitized[32];
   size_t n = 0;
   for (const char* p = text; *p != '\0'; ++p) {
     if (isspace(static_cast<unsigned char>(*p))) continue;
-    if (n >= sizeof(limpio) - 1) return false;
-    limpio[n++] = *p;
+    if (n >= sizeof(sanitized) - 1) return false;
+    sanitized[n++] = *p;
   }
-  limpio[n] = '\0';
+  sanitized[n] = '\0';
 
   if (n == 0 || (n & 1) != 0) return false;
   const uint8_t count = static_cast<uint8_t>(n / 2);
   if (count > capacity) return false;
 
   for (uint8_t i = 0; i < count; ++i) {
-    int alto = hexValue(limpio[i * 2]);
-    int bajo = hexValue(limpio[i * 2 + 1]);
-    if (alto < 0 || bajo < 0) return false;
-    uid[i] = static_cast<uint8_t>((alto << 4) | bajo);
+    const int highNibble = hexValue(sanitized[i * 2]);
+    const int lowNibble = hexValue(sanitized[i * 2 + 1]);
+    if (highNibble < 0 || lowNibble < 0) return false;
+    uid[i] = static_cast<uint8_t>((highNibble << 4) | lowNibble);
   }
   length = count;
   return true;

@@ -19,11 +19,11 @@ bool SerialLink::send(const Protocol::Message& message) {
     if (Config::SHOW_FULL_UID) {
       if (!Protocol::uidToHex(message.uid, message.uidLen, uid, sizeof(uid))) return false;
     } else {
-      snprintf(uid, sizeof(uid), "oculto");
+      snprintf(uid, sizeof(uid), "hidden");
     }
   }
-  Serial.printf("[SIM-TX SIN ENLACE] seq=%lu tipo=%s puerta=%s uid=%s\n",
-    static_cast<unsigned long>(message.seq),
+  Serial.printf("[SIM-TX NO LINK] sequence=%lu type=%s doorState=%s uid=%s\n",
+    static_cast<unsigned long>(message.sequence),
     Protocol::name(message.type),
     Protocol::name(message.doorState),
     uid);

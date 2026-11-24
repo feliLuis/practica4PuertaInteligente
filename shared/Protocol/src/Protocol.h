@@ -22,7 +22,7 @@ enum class DoorState : uint8_t {
 struct __attribute__((packed)) Message {
   uint8_t version;
   Type type;
-  uint32_t seq;
+  uint32_t sequence;
   DoorState doorState;
   uint8_t uidLen;
   uint8_t uid[10];
