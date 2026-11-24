@@ -2,205 +2,190 @@
 
 #include "config.h"
 #include <Arduino.h>
+#include <stdio.h>
+#include <string.h>
 
-ControladorCerradura::ControladorCerradura()
-  : cerradura_(EstadoCerradura::DESCONOCIDA),
-    modo_(Modo::AUTOMATICO),
-    puerta_(Protocolo::EstadoPuerta::DESCONOCIDA),
-    ultimaSenalSensor_(0),
-    autocierreSegundos_(Config::TIEMPO_AUTOCIERRE_DEFECTO_S),
-    inicioAutocierre_(0),
-    sensorConDatos_(false),
-    sensorPerdidoEmitido_(false),
-    esperandoCicloPuerta_(false),
-    vioPuertaAbierta_(false),
-    autocierreActivo_(false) {
-
-  credenciales_.agregar(Config::UID_DESBLOQUEAR, Config::UID_DESBLOQUEAR_LONGITUD, Accion::DESBLOQUEAR);
-  credenciales_.agregar(Config::UID_BLOQUEAR, Config::UID_BLOQUEAR_LONGITUD, Accion::BLOQUEAR);
+ControladorCerradura::ControladorCerradura(bool simulado)
+  : cerradura_(EstadoCerradura::DESCONOCIDA), modo_(Modo::AUTOMATICO),
+    puerta_(Protocolo::EstadoPuerta::DESCONOCIDA), ultimaSenalSensor_(0),
+    autocierreSegundos_(Config::TIEMPO_AUTOCIERRE_DEFECTO_S), inicioAutocierre_(0),
+    secuenciaEvento_(0), sensorConDatos_(false), autocierreActivo_(false),
+    simulado_(simulado) {
+  credenciales_.agregar(Config::UID_TARJETA, Config::UID_TARJETA_LONGITUD,
+                       Accion::DESBLOQUEAR, Config::ID_TARJETA);
+  credenciales_.agregar(Config::UID_LLAVERO, Config::UID_LLAVERO_LONGITUD,
+                       Accion::DESBLOQUEAR, Config::ID_LLAVERO);
 }
 
 void ControladorCerradura::registrarEvento(std::function<void(const Evento&)> callback) {
   eventoCallback_ = callback;
 }
 
-void ControladorCerradura::registrarMovimiento(std::function<void(Accion)> callback) {
+void ControladorCerradura::registrarMovimiento(std::function<bool(Accion)> callback) {
   movimientoCallback_ = callback;
 }
 
-void ControladorCerradura::emitir(Origen origen, TipoEvento tipo, bool ejecutado, const char* motivo) {
-  if (!eventoCallback_) return;
-  Evento evento;
+void ControladorCerradura::emitir(Origen origen, TipoEvento tipo, bool ejecutado,
+                                const char* motivo, const char* credentialId) {
+  Evento evento{};
+  evento.seq = ++secuenciaEvento_;
   evento.origen = origen;
   evento.tipo = tipo;
   evento.resultado = ejecutado ? ResultadoEvento::EJECUTADO : ResultadoEvento::RECHAZADO;
-  evento.ejecutado = ejecutado;
-  evento.motivo = motivo;
-  eventoCallback_(evento);
+  snprintf(evento.motivo, sizeof(evento.motivo), "%s", motivo);
+  snprintf(evento.credentialId, sizeof(evento.credentialId), "%s",
+           credentialId == nullptr ? "" : credentialId);
+  evento.puerta = puerta();
+  evento.cerradura = cerradura_;
+  evento.modo = modo_;
+  evento.simulado = simulado_;
+  if (eventoCallback_) eventoCallback_(evento);
 }
 
-void ControladorCerradura::cancelarAutocierre() {
-  autocierreActivo_ = false;
-  inicioAutocierre_ = 0;
-}
+void ControladorCerradura::cancelarAutocierre() { autocierreActivo_ = false; }
 
 bool ControladorCerradura::datosSensorRecientes() const {
-  if (!sensorConDatos_) return false;
-  return static_cast<uint32_t>(millis() - ultimaSenalSensor_) < Config::TIMEOUT_SENSOR_MS;
+  return sensorConDatos_ &&
+    static_cast<uint32_t>(millis() - ultimaSenalSensor_) < Config::TIMEOUT_SENSOR_MS;
 }
 
-void ControladorCerradura::recibirLatido() {
+void ControladorCerradura::revisarVigencia() {
+  if (!sensorConDatos_ || datosSensorRecientes()) return;
+  sensorConDatos_ = false;
+  puerta_ = Protocolo::EstadoPuerta::DESCONOCIDA;
+  cancelarAutocierre();
+  emitir(Origen::EDGE, TipoEvento::SENSOR, false, "sensor_offline");
+}
+
+void ControladorCerradura::evaluarAutocierre(bool reiniciar) {
+  if (modo_ != Modo::AUTOMATICO || cerradura_ != EstadoCerradura::DESBLOQUEADA ||
+      !datosSensorRecientes() || puerta_ != Protocolo::EstadoPuerta::CERRADA) {
+    cancelarAutocierre();
+    return;
+  }
+  if (reiniciar || !autocierreActivo_) {
+    inicioAutocierre_ = millis();
+    autocierreActivo_ = true;
+    emitir(Origen::EDGE, TipoEvento::AUTOCIERRE, true, "temporizador_iniciado");
+  }
+}
+
+bool ControladorCerradura::actualizarPuerta(Protocolo::EstadoPuerta nuevaPuerta, Origen origen) {
+  revisarVigencia();
+  if (nuevaPuerta != Protocolo::EstadoPuerta::ABIERTA &&
+      nuevaPuerta != Protocolo::EstadoPuerta::CERRADA) return false;
+
+  const bool recuperado = !sensorConDatos_;
+  const bool cambio = puerta_ != nuevaPuerta;
   ultimaSenalSensor_ = millis();
   sensorConDatos_ = true;
-  if (sensorPerdidoEmitido_) {
-    sensorPerdidoEmitido_ = false;
-  }
+  puerta_ = nuevaPuerta;
+  if (recuperado) emitir(origen, TipoEvento::SENSOR, true, "sensor_online");
+  if (cambio) emitir(origen, TipoEvento::PUERTA, true,
+                    nuevaPuerta == Protocolo::EstadoPuerta::ABIERTA ? "puerta_abierta" : "puerta_cerrada");
+  evaluarAutocierre(); // Refrescar una misma lectura no reinicia la cuenta.
+  return true;
 }
 
-void ControladorCerradura::actualizarPuerta(Protocolo::EstadoPuerta nuevaPuerta) {
-  recibirLatido();
+bool ControladorCerradura::recibirLatido(Protocolo::EstadoPuerta lectura, Origen origen) {
+  return actualizarPuerta(lectura, origen);
+}
 
-  if (puerta_ == nuevaPuerta) return;
-  const Protocolo::EstadoPuerta anterior = puerta_;
-  puerta_ = nuevaPuerta;
-  emitir(Origen::EDGE, TipoEvento::PUERTA,
-    nuevaPuerta != Protocolo::EstadoPuerta::DESCONOCIDA,
-    nuevaPuerta == Protocolo::EstadoPuerta::ABIERTA ? "puerta_abierta" :
-    nuevaPuerta == Protocolo::EstadoPuerta::CERRADA ? "puerta_cerrada" : "puerta_desconocida");
-
-  if (nuevaPuerta == Protocolo::EstadoPuerta::ABIERTA) {
-    vioPuertaAbierta_ = esperandoCicloPuerta_;
-    cancelarAutocierre();
-  } else if (nuevaPuerta == Protocolo::EstadoPuerta::CERRADA) {
-    if (modo_ == Modo::AUTOMATICO &&
-        cerradura_ == EstadoCerradura::DESBLOQUEADA &&
-        esperandoCicloPuerta_ && vioPuertaAbierta_ && datosSensorRecientes()) {
-      inicioAutocierre_ = millis();
-      autocierreActivo_ = true;
-      emitir(Origen::EDGE, TipoEvento::AUTOCIERRE, true, "temporizador_iniciado");
-    }
-  } else if (anterior != Protocolo::EstadoPuerta::DESCONOCIDA) {
-    cancelarAutocierre();
+Resultado ControladorCerradura::ejecutarAccion(Accion accion, Origen origen,
+                                             const char* credentialId) {
+  revisarVigencia();
+  if (accion != Accion::BLOQUEAR && accion != Accion::DESBLOQUEAR)
+    return {ResultadoEvento::RECHAZADO, "accion_invalida"};
+  if (accion == Accion::DESBLOQUEAR && modo_ == Modo::BLOQUEADO)
+    return {ResultadoEvento::RECHAZADO, "modo_bloqueado"};
+  if (accion == Accion::BLOQUEAR) {
+    if (!datosSensorRecientes()) return {ResultadoEvento::RECHAZADO, "sensor_sin_datos"};
+    if (puerta_ != Protocolo::EstadoPuerta::CERRADA)
+      return {ResultadoEvento::RECHAZADO, "puerta_no_cerrada"};
   }
+
+  const EstadoCerradura destino = accion == Accion::BLOQUEAR
+    ? EstadoCerradura::BLOQUEADA : EstadoCerradura::DESBLOQUEADA;
+  if (cerradura_ == destino) return {ResultadoEvento::EJECUTADO, "sin_cambio"};
+  if (!movimientoCallback_ || !movimientoCallback_(accion))
+    return {ResultadoEvento::RECHAZADO, "orden_servo_fallida"};
+
+  // El callback solo confirma emision de la orden. No hay sensor de pestillo.
+  cerradura_ = destino;
+  emitir(origen, accion == Accion::BLOQUEAR ? TipoEvento::BLOQUEO : TipoEvento::DESBLOQUEO,
+         true, simulado_ ? "movimiento_simulado" : "orden_pwm_emitida", credentialId);
+  evaluarAutocierre();
+  return {ResultadoEvento::EJECUTADO, "ok"};
 }
 
 Resultado ControladorCerradura::procesarAccion(Accion accion, Origen origen) {
-  Resultado resultado;
-
-  if (accion == Accion::DESBLOQUEAR) {
-    if (modo_ == Modo::BLOQUEADO) {
-      resultado = {ResultadoEvento::RECHAZADO, "modo_bloqueado"};
-      emitir(origen, TipoEvento::DESBLOQUEO, false, "modo_bloqueado");
-      return resultado;
-    }
-    cerradura_ = EstadoCerradura::DESBLOQUEADA;
-    if (modo_ == Modo::AUTOMATICO) {
-      esperandoCicloPuerta_ = true;
-      vioPuertaAbierta_ = (puerta_ == Protocolo::EstadoPuerta::ABIERTA);
-    }
-    cancelarAutocierre();
-    resultado = {ResultadoEvento::EJECUTADO, "ok"};
-    emitir(origen, TipoEvento::DESBLOQUEO, true, "ok");
-    if (movimientoCallback_) movimientoCallback_(Accion::DESBLOQUEAR);
-    return resultado;
-  }
-
-  if (!datosSensorRecientes()) {
-    resultado = {ResultadoEvento::RECHAZADO, "sensor_sin_datos"};
-    emitir(origen, TipoEvento::BLOQUEO, false, "sensor_sin_datos");
-  } else if (puerta_ == Protocolo::EstadoPuerta::ABIERTA) {
-    resultado = {ResultadoEvento::RECHAZADO, "puerta_abierta"};
-    emitir(origen, TipoEvento::BLOQUEO, false, "puerta_abierta");
-  } else if (puerta_ == Protocolo::EstadoPuerta::DESCONOCIDA) {
-    resultado = {ResultadoEvento::RECHAZADO, "puerta_desconocida"};
-    emitir(origen, TipoEvento::BLOQUEO, false, "puerta_desconocida");
-  } else {
-    cerradura_ = EstadoCerradura::BLOQUEADA;
-    esperandoCicloPuerta_ = false;
-    vioPuertaAbierta_ = false;
-    cancelarAutocierre();
-    resultado = {ResultadoEvento::EJECUTADO, "ok"};
-    emitir(origen, TipoEvento::BLOQUEO, true, "ok");
-    if (movimientoCallback_) movimientoCallback_(Accion::BLOQUEAR);
-  }
+  const Resultado resultado = ejecutarAccion(accion, origen, nullptr);
+  if (strcmp(resultado.motivo, "ok") != 0)
+    emitir(origen, TipoEvento::SOLICITUD, resultado.resultado == ResultadoEvento::EJECUTADO,
+           resultado.motivo);
   return resultado;
 }
 
-Resultado ControladorCerradura::procesarUid(const uint8_t* uid, uint8_t longitud) {
+Resultado ControladorCerradura::procesarUid(const uint8_t* uid, uint8_t longitud, Origen origen) {
+  revisarVigencia();
   Accion accion;
-  if (!credenciales_.buscar(uid, longitud, accion)) {
-    Resultado resultado = {ResultadoEvento::RECHAZADO, "uid_no_registrado"};
-    emitir(Origen::RFID, TipoEvento::ACCESO, false, "uid_no_registrado");
-    return resultado;
-  }
-  Resultado resultado = procesarAccion(accion, Origen::RFID);
-
+  const char* credentialId = nullptr;
+  Resultado resultado{ResultadoEvento::RECHAZADO, "uid_no_registrado"};
+  if (credenciales_.buscar(uid, longitud, accion, credentialId))
+    resultado = ejecutarAccion(accion, origen, credentialId);
+  // Un ACCESO por presentacion; BLOQUEO/DESBLOQUEO solo si hubo una nueva orden.
+  emitir(origen, TipoEvento::ACCESO, resultado.resultado == ResultadoEvento::EJECUTADO,
+         resultado.motivo, credentialId);
   return resultado;
 }
 
-Resultado ControladorCerradura::establecerModo(Modo nuevoModo) {
+Resultado ControladorCerradura::establecerModo(Modo nuevoModo, Origen origen) {
+  revisarVigencia();
+  if (nuevoModo != Modo::MANUAL && nuevoModo != Modo::AUTOMATICO && nuevoModo != Modo::BLOQUEADO) {
+    emitir(origen, TipoEvento::MODO, false, "modo_invalido");
+    return {ResultadoEvento::RECHAZADO, "modo_invalido"};
+  }
+  if (modo_ == nuevoModo) return {ResultadoEvento::EJECUTADO, "sin_cambio"};
   modo_ = nuevoModo;
-  if (nuevoModo != Modo::AUTOMATICO) {
-    esperandoCicloPuerta_ = false;
-    vioPuertaAbierta_ = false;
-    cancelarAutocierre();
-  }
-  Resultado resultado = {ResultadoEvento::EJECUTADO, "modo_actualizado"};
-  emitir(Origen::VOZ, TipoEvento::MODO, true, "modo_actualizado");
-  return resultado;
+  emitir(origen, TipoEvento::MODO, true, "modo_actualizado");
+  evaluarAutocierre();
+  return {ResultadoEvento::EJECUTADO, "modo_actualizado"};
 }
 
-Resultado ControladorCerradura::establecerAutocierre(uint32_t segundos) {
-  if (segundos < Config::TIEMPO_AUTOCIERRE_MIN_S ||
-      segundos > Config::TIEMPO_AUTOCIERRE_MAX_S) {
-    Resultado resultado = {ResultadoEvento::RECHAZADO, "autocierre_fuera_de_rango"};
-    emitir(Origen::VOZ, TipoEvento::AUTOCIERRE, false, "autocierre_fuera_de_rango");
-    return resultado;
+Resultado ControladorCerradura::establecerAutocierre(uint32_t segundos, Origen origen) {
+  revisarVigencia();
+  if (segundos < Config::TIEMPO_AUTOCIERRE_MIN_S || segundos > Config::TIEMPO_AUTOCIERRE_MAX_S) {
+    emitir(origen, TipoEvento::AUTOCIERRE, false, "autocierre_fuera_de_rango");
+    return {ResultadoEvento::RECHAZADO, "autocierre_fuera_de_rango"};
   }
+  if (autocierreSegundos_ == segundos) return {ResultadoEvento::EJECUTADO, "sin_cambio"};
   autocierreSegundos_ = segundos;
-  Resultado resultado = {ResultadoEvento::EJECUTADO, "autocierre_actualizado"};
-  emitir(Origen::VOZ, TipoEvento::AUTOCIERRE, true, "autocierre_actualizado");
-  return resultado;
+  emitir(origen, TipoEvento::AUTOCIERRE, true, "autocierre_actualizado");
+  evaluarAutocierre(true);
+  return {ResultadoEvento::EJECUTADO, "autocierre_actualizado"};
 }
 
 void ControladorCerradura::actualizar() {
-  if (sensorConDatos_ && !datosSensorRecientes() && !sensorPerdidoEmitido_) {
-    sensorConDatos_ = false;
-    sensorPerdidoEmitido_ = true;
-    puerta_ = Protocolo::EstadoPuerta::DESCONOCIDA;
-    esperandoCicloPuerta_ = false;
-    vioPuertaAbierta_ = false;
+  revisarVigencia();
+  if (!autocierreActivo_) return;
+  if (modo_ != Modo::AUTOMATICO || cerradura_ != EstadoCerradura::DESBLOQUEADA ||
+      !datosSensorRecientes() || puerta_ != Protocolo::EstadoPuerta::CERRADA) {
     cancelarAutocierre();
-    emitir(Origen::EDGE, TipoEvento::SENSOR, false, "sensor_sin_datos");
+    return;
   }
-
-  if (autocierreActivo_ && datosSensorRecientes() &&
-      puerta_ == Protocolo::EstadoPuerta::CERRADA) {
-    if (static_cast<uint32_t>(millis() - inicioAutocierre_) >= autocierreSegundos_ * 1000UL) {
-      autocierreActivo_ = false;
-      procesarAccion(Accion::BLOQUEAR, Origen::EDGE);
-    }
-  } else if (autocierreActivo_ && puerta_ != Protocolo::EstadoPuerta::CERRADA) {
-    cancelarAutocierre();
+  if (static_cast<uint32_t>(millis() - inicioAutocierre_) >= autocierreSegundos_ * 1000UL) {
+    cancelarAutocierre(); // Un fallo no produce reintentos en cada vuelta del loop.
+    procesarAccion(Accion::BLOQUEAR, Origen::EDGE);
   }
 }
 
-EstadoCerradura ControladorCerradura::cerradura() const {
-  return cerradura_;
-}
-
-Modo ControladorCerradura::modo() const {
-  return modo_;
-}
-
+EstadoCerradura ControladorCerradura::cerradura() const { return cerradura_; }
+Modo ControladorCerradura::modo() const { return modo_; }
 Protocolo::EstadoPuerta ControladorCerradura::puerta() const {
-  return puerta_;
+  return datosSensorRecientes() ? puerta_ : Protocolo::EstadoPuerta::DESCONOCIDA;
 }
-
-uint32_t ControladorCerradura::autocierreSegundos() const {
-  return autocierreSegundos_;
-}
-
-bool ControladorCerradura::sensorVigente() const {
-  return datosSensorRecientes();
+uint32_t ControladorCerradura::autocierreSegundos() const { return autocierreSegundos_; }
+bool ControladorCerradura::sensorVigente() const { return datosSensorRecientes(); }
+bool ControladorCerradura::autocierrePendiente() const {
+  return autocierreActivo_ && datosSensorRecientes();
 }

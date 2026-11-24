@@ -2,17 +2,24 @@
 #include "config.h"
 #include "Tipos.h"
 #include "ControladorCerradura.h"
-#include "ServoCerrojo.h"
-#include "IndicadorAcceso.h"
-#include <Protocolo.h>
+#include "MonitorSerie.h"
 
-ControladorCerradura controlador;
+#ifndef MODO_SIMULACION
+#define MODO_SIMULACION 0
+#endif
+#ifndef MODO_CALIBRACION
+#define MODO_CALIBRACION 0
+#endif
+#if MODO_SIMULACION && MODO_CALIBRACION
+#error "Simulacion y calibracion son configuraciones excluyentes."
+#endif
+
+#if !MODO_SIMULACION
+#include "ServoCerrojo.h"
 ServoCerrojo servo(Config::PIN_SERVO, Config::SERVO_DETACH_MS);
-IndicadorAcceso indicador(
-  Config::PIN_LED_VERDE,
-  Config::PIN_LED_ROJO,
-  Config::PIN_BUZZER,
-  Config::BUZZER_ACTIVO);
+#endif
+ControladorCerradura controlador(MODO_SIMULACION != 0);
+MonitorSerie monitor;
 
 const char* nombreTipo(TipoEvento tipo) {
   switch (tipo) {
@@ -23,6 +30,7 @@ const char* nombreTipo(TipoEvento tipo) {
     case TipoEvento::SENSOR: return "sensor";
     case TipoEvento::MODO: return "modo";
     case TipoEvento::AUTOCIERRE: return "autocierre";
+    case TipoEvento::SOLICITUD: return "solicitud";
   }
   return "desconocido";
 }
@@ -33,17 +41,17 @@ const char* nombreOrigen(Origen origen) {
     case Origen::RFID: return "rfid";
     case Origen::EDGE: return "edge";
     case Origen::NUBE: return "nube";
+    case Origen::DIAGNOSTICO: return "diagnostico";
   }
   return "desconocido";
 }
 
 const char* nombreCerradura(EstadoCerradura estado) {
   switch (estado) {
-    case EstadoCerradura::DESCONOCIDA: return "desconocida";
     case EstadoCerradura::BLOQUEADA: return "bloqueada";
     case EstadoCerradura::DESBLOQUEADA: return "desbloqueada";
+    default: return "desconocida";
   }
-  return "desconocida";
 }
 
 const char* nombreModo(Modo modo) {
@@ -56,139 +64,113 @@ const char* nombreModo(Modo modo) {
 }
 
 void registrarEvento(const Evento& evento) {
-  Serial.printf("[EVT] origen=%s tipo=%s ejecutado=%s motivo=%s\n",
-    nombreOrigen(evento.origen),
-    nombreTipo(evento.tipo),
-    evento.ejecutado ? "si" : "no",
-    evento.motivo);
-
-  if (evento.origen == Origen::RFID) {
-    if (evento.tipo == TipoEvento::DESBLOQUEO ||
-        evento.tipo == TipoEvento::BLOQUEO ||
-        evento.tipo == TipoEvento::ACCESO) {
-      if (evento.ejecutado) {
-        indicador.accesoAceptado();
-      } else {
-        indicador.accesoDenegado();
-      }
-    }
-  }
-
+  Serial.printf("[EVT%s] seq=%lu origen=%s tipo=%s resultado=%s motivo=%s "
+                "puerta=%s cerradura_estimada=%s modo=%s credentialId=%s\n",
+    evento.simulado ? "-SIM" : "", static_cast<unsigned long>(evento.seq),
+    nombreOrigen(evento.origen), nombreTipo(evento.tipo),
+    evento.ejecutado ? "ejecutado" : "rechazado", evento.motivo,
+    Protocolo::nombre(evento.puerta), nombreCerradura(evento.cerradura),
+    nombreModo(evento.modo), evento.credentialId);
 }
 
 void imprimirEstado() {
-  Serial.println("================================");
-  Serial.printf("cerradura=%s\n", nombreCerradura(controlador.cerradura()));
-  Serial.printf("puerta=%s\n", Protocolo::nombre(controlador.puerta()));
-  Serial.printf("modo=%s\n", nombreModo(controlador.modo()));
-  Serial.printf("autocierre=%lu s\n",
-    static_cast<unsigned long>(controlador.autocierreSegundos()));
-  Serial.printf("sensor=%s\n", controlador.sensorVigente() ? "vigente" : "sin_datos");
-  Serial.println("================================");
+  Serial.printf("cerradura_estimada=%s puerta=%s modo=%s autocierre_s=%lu "
+                "sensor=%s temporizador=%s\n",
+    nombreCerradura(controlador.cerradura()), Protocolo::nombre(controlador.puerta()),
+    nombreModo(controlador.modo()), static_cast<unsigned long>(controlador.autocierreSegundos()),
+    controlador.sensorVigente() ? "online" : "offline",
+    controlador.autocierrePendiente() ? "activo" : "inactivo");
 }
 
 void imprimirAyuda() {
-  Serial.println("Comandos:");
-  Serial.println("  puerta abierta|cerrada");
-  Serial.println("  uid 3961D706");
-  Serial.println("  latido");
-  Serial.println("  desbloquear");
-  Serial.println("  bloquear");
-  Serial.println("  modo manual|automatico|bloqueado");
-  Serial.println("  autocierre N");
-  Serial.println("  servo N");
-  Serial.println("  test verde");
-  Serial.println("  test rojo");
-  Serial.println("  test buzzer");
-  Serial.println("  estado");
-  Serial.println("  ayuda");
+  Serial.println("Comandos: ayuda | estado");
+#if MODO_SIMULACION
+  Serial.println("[SIM SIN PWM] puerta abierta|cerrada | latido | uid HEX");
+  Serial.println("desbloquear | bloquear | modo manual|automatico|bloqueado | autocierre N");
+  Serial.println("latido sin lectura no renueva Reed; use puerta abierta/cerrada para datos validos.");
+#elif MODO_CALIBRACION
+  Serial.println("[CALIBRACION FISICA] calibrar 0 | calibrar 90");
+  Serial.println("Requiere alimentacion y recorrido verificados. No usar durante operacion.");
+#else
+  Serial.println("[NORMAL] Simulacion y calibracion deshabilitadas.");
+#endif
 }
 
-String obtenerArgumento(const String& linea, uint8_t inicio) {
-  String argumento = linea.substring(inicio);
-  argumento.trim();
-  argumento.toUpperCase();
-  return argumento;
-}
-
-void procesarComando(String linea) {
-  linea.trim();
-  linea.toLowerCase();
-  if (linea.length() == 0) return;
-
-  if (linea == "ayuda") {
-    imprimirAyuda();
-  } else if (linea == "estado") {
-    imprimirEstado();
-  } else if (linea == "puerta abierta") {
-    controlador.actualizarPuerta(Protocolo::EstadoPuerta::ABIERTA);
-  } else if (linea == "puerta cerrada") {
-    controlador.actualizarPuerta(Protocolo::EstadoPuerta::CERRADA);
-  } else if (linea == "latido") {
+void procesarComando(const char* linea) {
+  if (strcmp(linea, "ayuda") == 0) imprimirAyuda();
+  else if (strcmp(linea, "estado") == 0) imprimirEstado();
+#if MODO_SIMULACION
+  else if (strcmp(linea, "puerta abierta") == 0)
+    controlador.actualizarPuerta(Protocolo::EstadoPuerta::ABIERTA, Origen::DIAGNOSTICO);
+  else if (strcmp(linea, "puerta cerrada") == 0)
+    controlador.actualizarPuerta(Protocolo::EstadoPuerta::CERRADA, Origen::DIAGNOSTICO);
+  else if (strcmp(linea, "latido") == 0) {
     controlador.recibirLatido();
-    Serial.println("[SIM] latido recibido");
-  } else if (linea == "desbloquear") {
-    controlador.procesarAccion(Accion::DESBLOQUEAR, Origen::VOZ);
-  } else if (linea == "bloquear") {
-    controlador.procesarAccion(Accion::BLOQUEAR, Origen::VOZ);
-  } else if (linea == "modo manual") {
-    controlador.establecerModo(Modo::MANUAL);
-  } else if (linea == "modo automatico") {
-    controlador.establecerModo(Modo::AUTOMATICO);
-  } else if (linea == "modo bloqueado") {
-    controlador.establecerModo(Modo::BLOQUEADO);
-  } else if (linea.startsWith("autocierre ")) {
-    int segundos = linea.substring(11).toInt();
-    controlador.establecerAutocierre(static_cast<uint32_t>(segundos));
-  } else if (linea.startsWith("servo ")) {
-    int angulo = linea.substring(6).toInt();
-    servo.moverA(angulo);
-    Serial.printf("[CAL] servo movido a %d grados\n", angulo);
-  } else if (linea == "test verde") {
-    indicador.testLedVerde();
-  } else if (linea == "test rojo") {
-    indicador.testLedRojo();
-  } else if (linea == "test buzzer") {
-    indicador.testBuzzer();
-  } else if (linea.startsWith("uid ")) {
-    String texto = linea.substring(4);
-    texto.trim();
+    Serial.println("[SIM] Latido sin lectura: no renueva la vigencia del Reed.");
+  } else if (strcmp(linea, "desbloquear") == 0)
+    controlador.procesarAccion(Accion::DESBLOQUEAR, Origen::DIAGNOSTICO);
+  else if (strcmp(linea, "bloquear") == 0)
+    controlador.procesarAccion(Accion::BLOQUEAR, Origen::DIAGNOSTICO);
+  else if (strcmp(linea, "modo manual") == 0)
+    controlador.establecerModo(Modo::MANUAL, Origen::DIAGNOSTICO);
+  else if (strcmp(linea, "modo automatico") == 0)
+    controlador.establecerModo(Modo::AUTOMATICO, Origen::DIAGNOSTICO);
+  else if (strcmp(linea, "modo bloqueado") == 0)
+    controlador.establecerModo(Modo::BLOQUEADO, Origen::DIAGNOSTICO);
+  else if (strncmp(linea, "autocierre ", 11) == 0) {
+    uint32_t segundos;
+    if (MonitorSerie::entero(linea + 11, segundos))
+      controlador.establecerAutocierre(segundos, Origen::DIAGNOSTICO);
+    else Serial.println("[RX] Entero decimal invalido.");
+  } else if (strncmp(linea, "uid ", 4) == 0) {
     uint8_t uid[10];
     uint8_t longitud = 0;
-    if (Protocolo::hexAUid(texto.c_str(), uid, 10, longitud)) {
-      controlador.procesarUid(uid, longitud);
-    } else {
-      Serial.println("[RX] UID invalido");
-    }
-  } else {
-    Serial.println("[RX] Comando desconocido. Escriba 'ayuda'.");
+    if (Protocolo::hexAUid(linea + 4, uid, sizeof(uid), longitud) &&
+        (longitud == 4 || longitud == 7 || longitud == 10))
+      controlador.procesarUid(uid, longitud, Origen::DIAGNOSTICO);
+    else Serial.println("[RX] UID invalido: se requieren 4, 7 o 10 bytes hexadecimales.");
   }
+#elif MODO_CALIBRACION
+  else if (strcmp(linea, "calibrar 0") == 0 || strcmp(linea, "calibrar 90") == 0) {
+    const bool emitida = strcmp(linea, "calibrar 0") == 0 ? servo.bloquear() : servo.desbloquear();
+    Serial.println(emitida ? "[CAL] Orden PWM emitida; posicion fisica sin confirmar."
+                           : "[CAL] Fallo al emitir orden PWM.");
+  }
+#endif
+  else Serial.println("[RX] Comando desconocido o deshabilitado en esta compilacion.");
 }
 
 void setup() {
   Serial.begin(Config::VELOCIDAD_SERIE);
-  Serial.setTimeout(50);
-  delay(100);
-  servo.begin();
-  indicador.begin();
   controlador.registrarEvento(registrarEvento);
-  controlador.registrarMovimiento([](Accion accion) {
-    if (accion == Accion::DESBLOQUEAR) servo.desbloquear();
-    else servo.bloquear();
+#if MODO_SIMULACION
+  controlador.registrarMovimiento([](Accion) {
+    Serial.println("[SIM] Orden de movimiento simulada, sin PWM.");
+    return true;
   });
-
-  Serial.println("[BOOT] ESP32 #1 control listo.");
-  Serial.println("[BOOT] Cerradura desconocida hasta movimiento confirmado por el controlador.");
-  Serial.println("[BOOT] Use 'latido' o 'puerta abierta/cerrada' para simular el ESP32 #2.");
+#elif MODO_CALIBRACION
+  if (!servo.begin()) Serial.println("[BOOT] Error de configuracion del servo.");
+#else
+  if (!servo.begin()) Serial.println("[BOOT] Error de configuracion del servo.");
+  controlador.registrarMovimiento([](Accion accion) {
+    return accion == Accion::DESBLOQUEAR ? servo.desbloquear() : servo.bloquear();
+  });
+#endif
+  Serial.println("[BOOT] Puerta y cerradura desconocidas. Sin movimiento de arranque.");
+  Serial.println("[BOOT] Sin comunicacion entre placas ni integracion AWS.");
   imprimirAyuda();
 }
 
 void loop() {
-  if (Serial.available()) {
-    String linea = Serial.readStringUntil('\n');
-    procesarComando(linea);
+  // Presupuesto por vuelta: la entrada continua tampoco impide actualizar temporizadores.
+  for (uint8_t i = 0; i < 64 && Serial.available(); ++i) {
+    const auto resultado = monitor.recibir(static_cast<char>(Serial.read()));
+    if (resultado == MonitorSerie::Resultado::LISTA) procesarComando(monitor.linea());
+    else if (resultado == MonitorSerie::Resultado::INVALIDA)
+      Serial.println("[RX] Linea descartada: excede capacidad o contiene caracteres invalidos.");
   }
   controlador.actualizar();
+#if !MODO_SIMULACION
   servo.actualizar();
-  indicador.actualizar();
+#endif
 }
