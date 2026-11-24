@@ -2,7 +2,7 @@
 
 **Asignatura** SIS-234 · **Fecha** 24 de noviembre de 2026
 
-**Base auditada** `3778a93` · **Rama de trabajo** `feat/esp32-sensores`
+**Bases integradas** `cd7ffe9` (ESP-NOW) y `0fe5377` (AWS y entrega) · **Rama de trabajo** `feat/esp32-sensores`
 
 **Estado** Implementación local de Lambda, configuración preparada y pruebas con clientes simulados. MQTT/TLS en el ESP32, despliegue y demo física pendientes.
 
@@ -10,7 +10,7 @@
 
 La puerta permite comprobar si está cerrada, autorizar una presentación RFID, consultar el estado por voz y accionar una cerradura de baja tensión. El Reed informa la posición de la puerta. El RC522 reconoce tarjeta y llavero. El SG90 representa la posición del mecanismo de cierre. La Práctica 4 añade histórico de lecturas y movimientos, autocierre en el Edge y consulta y ajuste por voz del modo y del temporizador. El Reed no informa la posición del pestillo y el SG90 no tiene realimentación mecánica en el montaje actual. La estimación publicada se debe comparar con la observación del mecanismo en la demo.
 
-El ESP32 de control será el único cliente de AWS. Concentra autorización, vigencia del Reed y decisiones sobre el servo. El otro ESP32 captura las señales y las entrega al controlador mediante el enlace a cargo del compañero. El diseño de AWS usa la interfaz de `LockController`, de modo que se puede ensayar antes de integrar el enlace.
+El ESP32 de control será el único cliente de AWS. Concentra autorización, vigencia del Reed y decisiones sobre el servo. El ESP32 de sensores entrega Reed, RFID y latidos por ESP-NOW unicast con protocolo v2. El futuro adaptador AWS consumirá las copias de `Event` y los getters de `LockController`. Para bloquear usará `ControlLinkManager::requestLock()`, que pide confirmación al nodo de sensores antes de ordenar el movimiento.
 
 ### Matriz RF1–RF15
 
@@ -18,7 +18,7 @@ El ESP32 de control será el único cliente de AWS. Concentra autorización, vig
 |---|---|---|---|
 | RF1 | Capturar datos de sensores | `DoorSensor` y `RfidReader` implementados | Verificar polaridad, rebote, tarjetas y montaje |
 | RF2 | Reportar sensor y actuador periódicamente | Snapshot y frecuencia especificados | Implementar adaptador MQTT/TLS, publicar Reed, resultado lógico RFID y estado estimado |
-| RF3 | Aplicar delta y confirmar en reported | Control local existente y flujo con actuador virtual comprobado | Implementar consumidor MQTT, confirmar y comprobar actuación física |
+| RF3 | Aplicar delta y confirmar en reported | Control local con confirmación ESP-NOW y flujo AWS con actuador virtual comprobados por separado | Implementar consumidor MQTT y correlacionar la orden Shadow con el resultado de la confirmación local |
 | RF4 | Consultar sensor del Thing por voz en español | `EstadoPuertaIntent` lee Reed vigente y responde a estado ausente | Probar frases en Alexa Console y decidir cómo exponer el último resultado lógico RFID como sensor adicional |
 | RF5 | Ordenar movimientos por voz mediante desired | `AbrirIntent` y `CerrarIntent` escriben orden con ID y vencimiento; simulación completa | Ejecutar un comando válido con revisión de interbloqueos y medir su respuesta |
 | RF6 | Consultar el estado del actuador por voz | Lee cerradura estimada de snapshot vigente | Probar frases y cotejar estado estimado con posición real |
@@ -28,7 +28,7 @@ El ESP32 de control será el único cliente de AWS. Concentra autorización, vig
 | RF10 | Regla IoT invoca Lambda con datos del objeto | Acción existente auditada; proyección SQL propuesta ensayada con cliente simulado | Política MQTT válida y ejecución con el objeto |
 | RF11 | Validar, enriquecer y almacenar lecturas | Lambda local descarta inválidos, enriquece y escribe condicionalmente | Medir resultados contra DynamoDB y publicaciones reales |
 | RF12 | Historial de movimientos con su origen | El actuador virtual emitió y persistió un desbloqueo con origen voz | Capturar cambios reales por voz, RFID y Edge, y corroborar su origen |
-| RF13 | Lógica automática y justificación Edge/Nube | Autocierre en `LockController`, probado con reloj simulado | Demostrar topes, cortes y conflictos con voz en el montaje |
+| RF13 | Lógica automática y justificación Edge/Nube | Autocierre y confirmación de cierre por ESP-NOW cubiertos con reloj y enlace simulados | Demostrar topes, cortes y conflictos con voz en el montaje |
 | RF14 | Reportar, consultar y modificar modo y parámetros por voz | Intents y slots existentes. Cambio y confirmación con actuador virtual | Reconocimiento en Alexa Console y aplicación desde el ESP32 |
 | RF15 | Mockups basados en DynamoDB | [Dos mockups con consultas y decisiones de usuario](mockups-reportes.md) | Incorporar ejemplos anonimizados obtenidos en la demo |
 
@@ -56,8 +56,8 @@ El ESP32 de control será el único cliente de AWS. Concentra autorización, vig
 flowchart LR
     Reed[Reed] --> Sensors[ESP32 sensores]
     RFID[RC522] --> Sensors
-    Sensors --> Link[Enlace local a cargo de otro integrante]
-    Link --> Control[ESP32 control]
+    Sensors <-->|ESP-NOW v2| Link[EspNowLink y ReliableChannel]
+    Link <--> Control[ESP32 control y ControlLinkManager]
     Control --> Servo[SG90]
     Control --> AWS[Adaptador AWS previsto]
 ~~~
@@ -71,6 +71,7 @@ flowchart LR
     LA --> B[(AlexaThingBindings)]
     LA <-->|Get y Update| SH[Shadow clásico]
     C[ESP32 control] <-->|MQTT TLS| SH
+    N[ESP32 sensores] <-->|ESP-NOW v2| C
     C -->|Eventos MQTT TLS| R[ChapaEventosRule]
     R --> L[Lambda de almacenamiento]
     L --> D[(ChapaHistory)]
@@ -103,7 +104,7 @@ flowchart LR
     Control --- GND
 ~~~
 
-El esquema refleja pines del código y el montaje propuesto. Para el servo, usar 5 V regulados y masa común con el controlador. Verificar corriente, recorrido y retención del mecanismo antes de acoplarlo. Para el Reed, confirmar la polaridad configurada y la estabilidad de 100 ms. El enlace entre placas se incorporará al diagrama cuando su responsable confirme el diseño.
+El esquema refleja pines del código y el montaje propuesto. Para el servo, usar 5 V regulados y masa común con el controlador. Verificar corriente, recorrido y retención del mecanismo antes de acoplarlo. Para el Reed, confirmar la polaridad configurada y la estabilidad de 100 ms. La comunicación ESP-NOW es por radio entre las placas.
 
 ### 2.4 Clases del objeto y módulos Lambda
 
@@ -135,6 +136,12 @@ classDiagram
         +reconcileShadow()
         +publishEvent()
     }
+    class ControlLinkManager {
+        +requestLock()
+        +confirmationPending()
+    }
+    class SensorLinkManager
+    class ReliableChannel
     class AlexaHandler {
         +lambda_handler()
         +bind_user()
@@ -146,11 +153,15 @@ classDiagram
         +validate_event()
         +history_table()
     }
-    DoorSensor ..> LockController : lectura a través del enlace
-    RfidReader ..> LockController : presentación a través del enlace
+    DoorSensor ..> SensorLinkManager : publica lectura
+    RfidReader ..> SensorLinkManager : publica presentación
+    SensorLinkManager --> ReliableChannel
+    ControlLinkManager --> ReliableChannel
+    ControlLinkManager --> LockController
     LockController --> CredentialList
     LockController ..> LockServo : callback de movimiento
     AwsAdapter ..> LockController : comandos y eventos
+    AwsAdapter ..> ControlLinkManager : solicitud de bloqueo
     AlexaHandler ..> AwsAdapter : contrato Shadow
     AwsAdapter ..> HistoryHandler : contrato de evento
 ~~~
@@ -168,6 +179,7 @@ sequenceDiagram
     participant I as Registro IoT
     participant S as Shadow
     participant C as Controlador
+    participant N as ESP32 sensores
     participant M as Servo
 
     U->>A: Vincula mi chapa con el número uno
@@ -186,8 +198,10 @@ sequenceDiagram
     L->>D: Resuelve el Thing
     L->>S: Consulta y escritura de desired con versión
     S-->>C: Delta ordenado por versión
-    C->>C: Aplica modo y verifica Reed vigente
-    C->>M: Emite PWM si procede
+    C->>C: Aplica modo y solicita confirmación de cierre
+    C->>N: STATE_REQUEST por ESP-NOW
+    N-->>C: STATE_RESPONSE correlacionado
+    C->>M: Emite PWM si la respuesta confirma cerrado
     C->>S: Reporta resultado y consume la orden
 ~~~
 
@@ -212,7 +226,7 @@ sequenceDiagram
 
 ~~~mermaid
 sequenceDiagram
-    participant R as Reed
+    participant R as ESP32 sensores y Reed
     participant C as LockController
     participant M as Servo
     participant E as Eventos
@@ -222,9 +236,15 @@ sequenceDiagram
     alt Puerta abierta, sensor vencido o salida de automático
         C->>C: Cancela temporizador
     else Vence con condiciones válidas
-        C->>M: Solicita bloqueo
-        M-->>C: Resultado de la orden PWM
-        C->>E: Movimiento Edge o rechazo
+        C->>R: STATE_REQUEST por ESP-NOW
+        alt Respuesta oportuna, correlacionada y cerrada
+            R-->>C: STATE_RESPONSE cerrado
+            C->>M: Solicita bloqueo
+            M-->>C: Resultado de la orden PWM
+            C->>E: Movimiento Edge o fallo de PWM
+        else Lectura abierta, cambio de sesión o timeout
+            C->>C: Cancela o descarta la confirmación
+        end
     end
 ~~~
 
@@ -237,7 +257,9 @@ stateDiagram-v2
     Cuenta --> Espera: Se abre la puerta o vence el Reed
     Cuenta --> Espera: Cambia a manual o bloqueado
     Cuenta --> Cuenta: Cambia retardo y reinicia intervalo
-    Cuenta --> Ejecutar: Vence y se mantienen condiciones
+    Cuenta --> Confirmar: Vence y se mantienen condiciones
+    Confirmar --> Ejecutar: STATE_RESPONSE cerrado y correlacionado
+    Confirmar --> Espera: Puerta abierta, sesión nueva o vence plazo
     Ejecutar --> Espera: Registrar movimiento o fallo
 ~~~
 
@@ -254,7 +276,7 @@ Shadow clásico bajo `$aws/things/<thingName>/shadow`. Publicar a `get` y `updat
 | `reported` | `puerta`: `abierta`, `cerrada` o `desconocida`. `cerradura`: `bloqueada`, `desbloqueada` o `desconocida`. Reportar `modo`, `autocierre_s`, `reportado_ms` UTC y `ordenResultado` con `id` y `resultado` |
 | `delta` | Diferencias pendientes. Aplicar primero configuración. Validar ID, plazo, modo y Reed para movimientos. Publicar resultado y retirar `desired.orden` usando versión para no retirar una orden nueva |
 
-La Lambda considera vigente un snapshot de hasta 60 s con tolerancia de 5 s para un reloj adelantado. El controlador aplica además su propia vigencia de Reed de 30 s. Un Shadow previo sin `reportado_ms` se trata como desconocido. El formato histórico `desired.cerradura` requiere reconciliación antes de habilitar el consumidor MQTT. La simulación ignora ese movimiento legado. En el dispositivo, una reconexión debe probar tanto una orden válida dentro de su plazo como una caducada o contradictoria. La persistencia del ID aplicado y la publicación de confirmación tras reinicio quedan para la implementación del adaptador.
+La Lambda considera vigente un snapshot de hasta 60 s con tolerancia de 5 s para un reloj adelantado. El controlador aplica una vigencia local de 3 s y una ventana de confirmación de 750 ms para el bloqueo. El adaptador deberá correlacionar el ID de Shadow con el resultado local. Si `requestLock()` devuelve éxito mientras la confirmación sigue pendiente, se espera movimiento, rechazo o vencimiento antes de confirmar. Un Shadow previo sin `reportado_ms` se trata como desconocido y la simulación ignora `desired.cerradura` legado. En reconexión se comprobarán órdenes válidas, caducadas y contradictorias.
 
 ### 2.8 IoT Rule, Lambdas y DynamoDB
 
@@ -277,7 +299,7 @@ Skill existente **chapa inteligente**, locale `es-MX`. El [modelo original](../a
 
 ## 3. Desarrollo e implementación
 
-- `firmware/esp32_sensors`: Reed, RFID y diagnóstico USB. `firmware/esp32_control`: estados, autorización, decisiones y servo. El protocolo y el enlace de esta fase siguen en el ámbito del compañero.
+- `firmware/esp32_sensors`: Reed, RFID, latidos y respuestas de estado. `firmware/esp32_control`: autorización, servo y confirmación asíncrona del cierre. `shared/Protocol`: tramas v2, sesiones, ACK, deduplicación y transporte ESP-NOW. El adaptador AWS deberá mapear `Mode::BLOCKED` a `bloqueado`, `Event.sequence` a `seq` y los demás enums al contrato externo. El estado de ejecución viene de `Event.result` y el ID persistente de telemetría se genera aparte de la secuencia local.
 - [Configuración auditada y sanitizada](../aws/config/deployed-sanitized.json): Thing, ARN de política observado con cuenta omitida, regla, runtime y handler de ambas Lambdas, permisos de invocación, rol de ejecución y definiciones de tablas. La acción IoT usa un permiso basado en el recurso Lambda. La auditoría no identificó un rol de ejecución de regla para esta acción.
 - [Política IoT propuesta](../aws/config/iot-policy.proposed.json): delimita cliente, publicaciones, suscripciones y recepción. La política vigente v1 tiene los ARN incorrectos. [Roles propuestos](../aws/config/lambda-roles.proposed.json): separan escrituras de histórico, operaciones de vinculación, Shadow y logs. El despliegue auditado usa `PowerUserRole`; su amplitud se documenta en la exportación. Las propuestas usan marcadores y requieren revisión antes de aplicarse.
 - [Plantilla del objeto](../aws/config/device.example.json): completar localmente en `device.local.json`, que está ignorado junto con los certificados, claves y `secrets.h`. La plantilla describe parámetros para el futuro adaptador.
@@ -302,18 +324,18 @@ La suite nueva [`test_aws_integration.py`](../tests/test_aws_integration.py) imp
 
 | Verificación | Resultado observado |
 |---|---|
-| Suite existente de firmware, Zig C++ | **32/32** con hardware simulado. 29 de control y una por cada variante de consola |
+| Suite de firmware del merge, Zig C++ | **85/85** con hardware simulado en ocho ejecutables. Incluye controlador, sensores, protocolo, enlace y tres variantes de consola |
 | Integración local de las Lambdas corregidas | **16/16** pruebas, con casos parametrizados. La misma publicación con dos tiempos de ingreso produjo una fila. Una orden válida movió el actuador virtual y dejó confirmación e histórico. Órdenes vencidas o incompatibles no lo movieron |
 | Ampliación de la demo simulada | **20/20** pruebas en total y el caso de voz ejecutado también por separado. Los cinco mensajes de la muestra, publicados dos veces cada uno, dejaron cinco filas únicas con su origen. La orden pendiente se aplicó una vez tras la reconexión virtual. El modo bloqueado prevaleció sobre una orden simultánea. Se comprobó la correspondencia de los tópicos con los ARN de la política propuesta |
 | Pruebas previas del backend auditado | **37 casos simulados**. Sirven de línea base para slots, formato de solicitudes y defectos observados antes de las correcciones |
-| Compilación PlatformIO | **5/5**. Control: `esp32dev`, `simulation` y `calibration`. Sensores: `esp32dev` y `diagnostic`. Es el firmware actual, con el enlace y el adaptador pendientes |
+| Compilación PlatformIO | **5/5**. Control: `esp32dev`, `simulation` y `calibration`. Sensores: `esp32dev` y `diagnostic`. Las compilaciones incluyen ESP-NOW. El adaptador AWS está pendiente |
 | Histórico auditado en DynamoDB | Tres filas leídas para el Thing en una consulta limitada. Las tres tenían `tipo`, `origen`, `resultado` y `puerta`. Una incluía `cerradura` y una incluía `seq` y `diferido`. Se registraron atributos y tipos; esta evidencia no atribuye origen físico ni mide rendimiento |
 
 **Escenario mensual.** Un ESP32 conectado 30 días, un respaldo cada 30 s, 100 eventos adicionales diarios, aproximadamente 270.000 mensajes MQTT, 89.400 operaciones de Shadow para las publicaciones periódicas y de cambio, 89.400 reglas y acciones, 90.000 invocaciones Lambda de 128 MB y 200 ms, unas 90.000 escrituras bajo demanda y 2.000 unidades de lectura. A tarifas públicas de referencia, el núcleo cuesta aproximadamente **USD 0,52/mes** antes de créditos, logs, impuestos y tráfico adicional de reconexión. Los conteos de IoT están por debajo de las referencias publicadas de 500.000 mensajes, 225.000 operaciones Shadow y 250.000 reglas/acciones cuando aplica ese beneficio. Lambda queda por debajo de 1 millón de solicitudes y 400.000 GB·s. Las tablas están bajo demanda: las cuotas de capacidad aprovisionada no se descuentan de estas solicitudes. El proyecto debe confirmar su plan y consumo antes de informar un costo efectivo. [IoT Core](https://aws.amazon.com/iot-core/pricing/) · [Lambda](https://aws.amazon.com/lambda/pricing/) · [DynamoDB](https://aws.amazon.com/dynamodb/pricing/)
 
 ## 6. Conclusiones
 
-El trabajo local confirma los contratos de Alexa, Shadow e histórico con clientes simulados y conserva los recursos que ya existen. La deduplicación usa la clave estable derivada del ID de origen. El Edge conserva las reglas que requieren el estado local y la operación sin Internet. La demo completa depende de implementar el adaptador MQTT/TLS, integrar el enlace del compañero y verificar en hardware que el estado estimado corresponde al mecanismo.
+El trabajo local confirma los contratos de Alexa, Shadow e histórico con clientes simulados y conserva los recursos que ya existen. El firmware ya incorpora ESP-NOW y confirmación del Reed antes del bloqueo. Para la demo completa falta el adaptador MQTT/TLS, validar la coexistencia del canal WiFi con ESP-NOW y comprobar la posición del mecanismo y el flujo integrado en hardware.
 
 ## 7. Recomendaciones
 

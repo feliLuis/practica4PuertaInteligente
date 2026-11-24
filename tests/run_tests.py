@@ -1,4 +1,4 @@
-"""Build and run controller and console tests with simulated hardware."""
+"""Build and run all firmware tests with simulated hardware."""
 import os
 from pathlib import Path
 import shlex
@@ -31,25 +31,40 @@ def main():
     # Keep the test compiler cache inside the project and ignored by Git.
     environment["ZIG_GLOBAL_CACHE_DIR"] = str(BUILD / "zig-cache")
     control = "firmware/esp32_control"
-    common = ["tests/stubs/Fakes.cpp", "shared/Protocol/src/Protocol.cpp"]
+    sensors = "firmware/esp32_sensors"
+    fakes = ["tests/stubs/Fakes.cpp"]
+    protocol = ["shared/Protocol/src/Protocol.cpp"]
+    common = fakes + protocol
     logic = [f"{control}/src/LockController.cpp", f"{control}/src/CredentialList.cpp"]
     actuator = [f"{control}/src/LockServo.cpp"]
-    jobs = [("control", control, ["tests/control_tests.cpp"] + logic + actuator, [])]
+    readers = [f"{sensors}/src/DoorSensor.cpp", f"{sensors}/src/RfidReader.cpp",
+               f"{sensors}/src/SerialLink.cpp"]
+    legacy_timeout = ["-DTEST_SENSOR_TIMEOUT_MS=30000UL"]
+    jobs = [("control", control, ["tests/control_tests.cpp"] + logic + actuator + common, legacy_timeout),
+            ("protocol", "shared/Protocol", ["tests/protocol_tests.cpp"] + protocol + fakes, []),
+            ("link", control, ["tests/link_tests.cpp"] + logic +
+             [f"{control}/src/ControlLinkManager.cpp", f"{sensors}/src/SensorLinkManager.cpp",
+              "shared/Protocol/src/ReliableChannel.cpp"] + common, [f"-I{sensors}/include"]),
+            ("sensors_normal", sensors, ["tests/sensors_tests.cpp"] + readers + common,
+             ["-DUID_DIAGNOSTICS=0"]),
+            ("sensors_diagnostic", sensors, ["tests/sensors_tests.cpp"] + readers + common,
+             ["-DUID_DIAGNOSTICS=1"])]
     for name, simulation, calibration in (("normal", 0, 0), ("simulation", 1, 0), ("calibration", 0, 1)):
         jobs.append(("console_" + name, control, ["tests/console_tests.cpp"] + logic +
-                         ([] if simulation else actuator),
-                         [f"-DSIMULATION_MODE={simulation}", f"-DCALIBRATION_MODE={calibration}"]))
+                         ([] if simulation else actuator) + common,
+                         [f"-DSIMULATION_MODE={simulation}", f"-DCALIBRATION_MODE={calibration}",
+                          "-DHOST_TEST=1"] + legacy_timeout))
     print("Compiler:", " ".join(cxx), flush=True)
     subprocess.run(cxx + ["--version"], check=True, env=environment)
     for name, project, sources, flags in jobs:
         target = BUILD / (name + (".exe" if os.name == "nt" else ""))
         command = cxx + ["-std=c++11", "-Wall", "-Wextra", "-Werror",
                          "-Itests/stubs", "-Itests", f"-I{project}/include",
-                         "-Ishared/Protocol/src"] + flags + sources + common + ["-o", str(target)]
+                         "-Ishared/Protocol/src"] + flags + sources + ["-o", str(target)]
         print("\nBuilding and running", name, flush=True)
         subprocess.run(command, cwd=REPO, env=environment, check=True)
         subprocess.run([str(target)], cwd=REPO, env=environment, check=True)
-    print("\nAll suites passed using simulated hardware.", flush=True)
+    print("\nAll test binaries passed using simulated hardware.", flush=True)
 
 
 if __name__ == "__main__":

@@ -7,8 +7,8 @@ class CredentialList {
 public:
   CredentialList();
   bool add(const uint8_t* uid, uint8_t length, Action action, const char* credentialId);
-  bool buscar(const uint8_t* uid, uint8_t length, Action& action,
-              const char*& credentialId) const;
+  bool find(const uint8_t* uid, uint8_t length, Action& action,
+            const char*& credentialId) const;
 
 private:
   struct Credential {
@@ -20,5 +20,5 @@ private:
   static constexpr uint8_t MAX_CREDENTIALS = 8;
   Credential credentials_[MAX_CREDENTIALS];
   uint8_t count_;
-  static bool coinciden(const Credential& credential, const uint8_t* uid, uint8_t length);
+  static bool matches(const Credential& credential, const uint8_t* uid, uint8_t length);
 };

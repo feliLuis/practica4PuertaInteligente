@@ -39,10 +39,10 @@ struct FakeSerial {
   void println(const char* text) { output += text; output += '\n'; }
   void printf(const char* format, ...) {
     char buffer[1024];
-    va_list argumentos;
-    va_start(argumentos, format);
-    vsnprintf(buffer, sizeof(buffer), format, argumentos);
-    va_end(argumentos);
+    va_list arguments;
+    va_start(arguments, format);
+    vsnprintf(buffer, sizeof(buffer), format, arguments);
+    va_end(arguments);
     output += buffer;
   }
 };

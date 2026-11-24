@@ -1,4 +1,5 @@
 .pio/
+**/include/esp_now_config.h
 .vscode/
 *.pem
 *.key
