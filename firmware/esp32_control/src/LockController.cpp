@@ -12,9 +12,9 @@ LockController::LockController(bool simulated)
     eventSequence_(0), sensorHasData_(false), autoLockActive_(false),
     simulated_(simulated) {
   credentials_.add(Config::CARD_UID, Config::CARD_UID_LENGTH,
-                       Action::UNLOCK, Config::CARD_ID);
+                   Action::UNLOCK, Config::CARD_ID);
   credentials_.add(Config::KEYFOB_UID, Config::KEYFOB_UID_LENGTH,
-                       Action::UNLOCK, Config::KEYFOB_ID);
+                   Action::UNLOCK, Config::KEYFOB_ID);
 }
 
 void LockController::onEvent(std::function<void(const Event&)> callback) {
@@ -25,10 +25,14 @@ void LockController::onMovement(std::function<bool(Action)> callback) {
   movementCallback_ = callback;
 }
 
+void LockController::onLockRequest(std::function<void(Source)> callback) {
+  lockRequestCallback_ = callback;
+}
+
 void LockController::emit(Source source, EventType type, bool executed,
-                                const char* reason, const char* credentialId) {
+                          const char* reason, const char* credentialId) {
   Event event{};
-  event.seq = ++eventSequence_;
+  event.sequence = ++eventSequence_;
   event.source = source;
   event.type = type;
   event.result = executed ? EventResult::EXECUTED : EventResult::REJECTED;
@@ -66,7 +70,7 @@ void LockController::evaluateAutoLock(bool reset) {
   if (reset || !autoLockActive_) {
     autoLockStartedAt_ = millis();
     autoLockActive_ = true;
-    emit(Source::EDGE, EventType::AUTO_LOCK, true, "temporizador_iniciado");
+    emit(Source::EDGE, EventType::AUTO_LOCK, true, "auto_lock_timer_started");
   }
 }
 
@@ -76,13 +80,13 @@ bool LockController::updateDoor(Protocol::DoorState newDoorState, Source source)
       newDoorState != Protocol::DoorState::CLOSED) return false;
 
   const bool recovered = !sensorHasData_;
-  const bool cambio = doorState_ != newDoorState;
+  const bool changed = doorState_ != newDoorState;
   lastSensorSignal_ = millis();
   sensorHasData_ = true;
   doorState_ = newDoorState;
   if (recovered) emit(source, EventType::SENSOR, true, "sensor_online");
-  if (cambio) emit(source, EventType::DOOR, true,
-                    newDoorState == Protocol::DoorState::OPEN ? "puerta_abierta" : "puerta_cerrada");
+  if (changed) emit(source, EventType::DOOR, true,
+                    newDoorState == Protocol::DoorState::OPEN ? "door_open" : "door_closed");
   evaluateAutoLock(); // Refreshing the same reading does not restart the timer.
   return true;
 }
@@ -91,29 +95,37 @@ bool LockController::receiveHeartbeat(Protocol::DoorState reading, Source source
   return updateDoor(reading, source);
 }
 
+void LockController::invalidateSensor(Source source) {
+  const bool wasOnline = sensorHasData_;
+  sensorHasData_ = false;
+  doorState_ = Protocol::DoorState::UNKNOWN;
+  cancelAutoLock();
+  if (wasOnline) emit(source, EventType::SENSOR, false, "sensor_session_changed");
+}
+
 Result LockController::executeAction(Action action, Source source,
-                                             const char* credentialId) {
+                                     const char* credentialId) {
   checkSensorFreshness();
   if (action != Action::LOCK && action != Action::UNLOCK)
-    return {EventResult::REJECTED, "accion_invalida"};
-  if (action == Action::UNLOCK && mode_ == Mode::LOCKED)
-    return {EventResult::REJECTED, "modo_bloqueado"};
+    return {EventResult::REJECTED, "invalid_action"};
+  if (action == Action::UNLOCK && mode_ == Mode::BLOCKED)
+    return {EventResult::REJECTED, "blocked_mode"};
   if (action == Action::LOCK) {
-    if (!hasRecentSensorData()) return {EventResult::REJECTED, "sensor_sin_datos"};
+    if (!hasRecentSensorData()) return {EventResult::REJECTED, "sensor_data_unavailable"};
     if (doorState_ != Protocol::DoorState::CLOSED)
-      return {EventResult::REJECTED, "puerta_no_cerrada"};
+      return {EventResult::REJECTED, "door_not_closed"};
   }
 
   const LockState target = action == Action::LOCK
     ? LockState::LOCKED : LockState::UNLOCKED;
-  if (lockState_ == target) return {EventResult::EXECUTED, "sin_cambio"};
+  if (lockState_ == target) return {EventResult::EXECUTED, "no_change"};
   if (!movementCallback_ || !movementCallback_(action))
-    return {EventResult::REJECTED, "orden_servo_fallida"};
+    return {EventResult::REJECTED, "servo_command_failed"};
 
   // The callback confirms command issuance. There is no latch position sensor.
   lockState_ = target;
   emit(source, action == Action::LOCK ? EventType::LOCK : EventType::UNLOCK,
-         true, simulated_ ? "movimiento_simulado" : "orden_pwm_emitida", credentialId);
+         true, simulated_ ? "simulated_movement" : "pwm_command_issued", credentialId);
   evaluateAutoLock();
   return {EventResult::EXECUTED, "ok"};
 }
@@ -130,39 +142,40 @@ Result LockController::processUid(const uint8_t* uid, uint8_t length, Source sou
   checkSensorFreshness();
   Action action;
   const char* credentialId = nullptr;
-  Result result{EventResult::REJECTED, "uid_no_registrado"};
-  if (credentials_.buscar(uid, length, action, credentialId))
+  Result result{EventResult::REJECTED, "unknown_uid"};
+  if (credentials_.find(uid, length, action, credentialId))
     result = executeAction(action, source, credentialId);
   // Emit one access event per presentation and a lock or unlock event only for a new command.
   emit(source, EventType::ACCESS, result.result == EventResult::EXECUTED,
-         result.reason, credentialId);
+         result.result == EventResult::EXECUTED ? "authorized_credential" : result.reason,
+         credentialId);
   return result;
 }
 
 Result LockController::setMode(Mode newMode, Source source) {
   checkSensorFreshness();
-  if (newMode != Mode::MANUAL && newMode != Mode::AUTOMATIC && newMode != Mode::LOCKED) {
-    emit(source, EventType::MODE, false, "modo_invalido");
-    return {EventResult::REJECTED, "modo_invalido"};
+  if (newMode != Mode::MANUAL && newMode != Mode::AUTOMATIC && newMode != Mode::BLOCKED) {
+    emit(source, EventType::MODE, false, "invalid_mode");
+    return {EventResult::REJECTED, "invalid_mode"};
   }
-  if (mode_ == newMode) return {EventResult::EXECUTED, "sin_cambio"};
+  if (mode_ == newMode) return {EventResult::EXECUTED, "no_change"};
   mode_ = newMode;
-  emit(source, EventType::MODE, true, "modo_actualizado");
+  emit(source, EventType::MODE, true, "mode_updated");
   evaluateAutoLock();
-  return {EventResult::EXECUTED, "modo_actualizado"};
+  return {EventResult::EXECUTED, "mode_updated"};
 }
 
 Result LockController::setAutoLock(uint32_t seconds, Source source) {
   checkSensorFreshness();
   if (seconds < Config::MIN_AUTO_LOCK_SECONDS || seconds > Config::MAX_AUTO_LOCK_SECONDS) {
-    emit(source, EventType::AUTO_LOCK, false, "autocierre_fuera_de_rango");
-    return {EventResult::REJECTED, "autocierre_fuera_de_rango"};
+    emit(source, EventType::AUTO_LOCK, false, "auto_lock_out_of_range");
+    return {EventResult::REJECTED, "auto_lock_out_of_range"};
   }
-  if (autoLockSeconds_ == seconds) return {EventResult::EXECUTED, "sin_cambio"};
+  if (autoLockSeconds_ == seconds) return {EventResult::EXECUTED, "no_change"};
   autoLockSeconds_ = seconds;
-  emit(source, EventType::AUTO_LOCK, true, "autocierre_actualizado");
+  emit(source, EventType::AUTO_LOCK, true, "auto_lock_updated");
   evaluateAutoLock(true);
-  return {EventResult::EXECUTED, "autocierre_actualizado"};
+  return {EventResult::EXECUTED, "auto_lock_updated"};
 }
 
 void LockController::update() {
@@ -175,7 +188,8 @@ void LockController::update() {
   }
   if (static_cast<uint32_t>(millis() - autoLockStartedAt_) >= autoLockSeconds_ * 1000UL) {
     cancelAutoLock(); // A failure must not trigger a retry on every loop.
-    processAction(Action::LOCK, Source::EDGE);
+    if (lockRequestCallback_) lockRequestCallback_(Source::EDGE);
+    else emit(Source::EDGE, EventType::REQUEST, false, "lock_confirmation_unavailable");
   }
 }
 

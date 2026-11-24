@@ -9,19 +9,19 @@ DoorSensor::DoorSensor()
 
 void DoorSensor::begin() {
   pinMode(Config::PIN_REED, INPUT_PULLUP);
-  const bool reedCerrado = (digitalRead(Config::PIN_REED) == LOW);
+  const bool reedClosed = (digitalRead(Config::PIN_REED) == LOW);
   stable_ = Protocol::DoorState::UNKNOWN;
   candidate_ = Config::REED_CLOSED_IS_LOW
-    ? (reedCerrado ? Protocol::DoorState::CLOSED : Protocol::DoorState::OPEN)
-    : (reedCerrado ? Protocol::DoorState::OPEN : Protocol::DoorState::CLOSED);
+    ? (reedClosed ? Protocol::DoorState::CLOSED : Protocol::DoorState::OPEN)
+    : (reedClosed ? Protocol::DoorState::OPEN : Protocol::DoorState::CLOSED);
   stableSince_ = millis();
 }
 
 bool DoorSensor::update() {
-  const bool reedCerrado = (digitalRead(Config::PIN_REED) == LOW);
+  const bool reedClosed = (digitalRead(Config::PIN_REED) == LOW);
   const Protocol::DoorState reading = Config::REED_CLOSED_IS_LOW
-    ? (reedCerrado ? Protocol::DoorState::CLOSED : Protocol::DoorState::OPEN)
-    : (reedCerrado ? Protocol::DoorState::OPEN : Protocol::DoorState::CLOSED);
+    ? (reedClosed ? Protocol::DoorState::CLOSED : Protocol::DoorState::OPEN)
+    : (reedClosed ? Protocol::DoorState::OPEN : Protocol::DoorState::CLOSED);
 
   const uint32_t now = millis();
   if (reading != candidate_) {
