@@ -8,32 +8,21 @@
   },
   "iotPolicy": {
     "policyName": "chapa-inteligente-01-policy",
-    "defaultVersionId": "1",
+    "defaultVersionId": "2",
     "policyDocument": {
       "Version": "2012-10-17",
       "Statement": [
         {
           "Effect": "Allow",
           "Action": "iot:Connect",
-          "Resource": "arn:aws:iot:us-east-2:ACCOUNT_ID:<REDACTED>"
+          "Resource": "arn:aws:iot:us-east-2:ACCOUNT_ID:client/chapa-inteligente-01"
         },
         {
           "Effect": "Allow",
-          "Action": [
-            "iot:Publish",
-            "iot:Receive"
-          ],
+          "Action": "iot:Publish",
           "Resource": [
-            "arn:aws:iot:us-east-2:ACCOUNT_ID:<REDACTED>",
-            "arn:aws:iot:us-east-2:ACCOUNT_ID:<REDACTED>"
-          ]
-        },
-        {
-          "Effect": "Allow",
-          "Action": "iot:Subscribe",
-          "Resource": [
-            "arn:aws:iot:us-east-2:ACCOUNT_ID:<REDACTED>",
-            "arn:aws:iot:us-east-2:ACCOUNT_ID:<REDACTED>"
+            "arn:aws:iot:us-east-2:ACCOUNT_ID:topic/chapa/chapa-inteligente-01/events",
+            "arn:aws:iot:us-east-2:ACCOUNT_ID:topic/$aws/things/chapa-inteligente-01/shadow/update"
           ]
         }
       ]
@@ -50,7 +39,7 @@
         }
       }
     ],
-    "sql": "SELECT topic(2) AS thingName,\n       timestamp() AS ts,\n       *\nFROM 'chapa/+/events'"
+    "sql": "SELECT topic(2) AS thingName, timestamp() AS ts, eventId, tipo, origen, resultado, puerta, cerradura, modo, motivo, credentialId, seq, diferido, autocierre_s, simulado FROM 'chapa/chapa-inteligente-01/events'"
   },
   "functions": [
     {
@@ -60,7 +49,8 @@
       "memorySize": 128,
       "timeout": 3,
       "role": "PowerUserRole",
-      "codeSha256": "/DFLMKrty2bWhO7qj94B67xoiSCyVJhyLTmOjfgR2c0="
+      "codeSha256": "OwGJItvsnWO4s9DNUM5Z7hhjUvA4yRhX5KbhpSn7ZHk=",
+      "lastModified": "2026-11-24T20:37:41Z"
     },
     {
       "name": "chapa-skill-alexa",
@@ -69,7 +59,8 @@
       "memorySize": 128,
       "timeout": 10,
       "role": "PowerUserRole",
-      "codeSha256": "M9wpEQB7WdARiEAQYwSmNK+jQUpjOWoCd4M5EOotWKY="
+      "codeSha256": "M9wpEQB7WdARiEAQYwSmNK+jQUpjOWoCd4M5EOotWKY=",
+      "lastModified": "2026-11-24T02:41:21Z"
     }
   ],
   "executionRole": {

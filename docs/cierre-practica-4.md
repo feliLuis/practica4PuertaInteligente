@@ -1,6 +1,6 @@
 # Cierre técnico de la Práctica 4
 
-Este plan usa las evidencias del [informe](Practica-4.md) y queda pendiente de autorización para ejecución real. La prueba AWS empleará el cliente virtual y conservará el SG90 aislado del control remoto.
+Este plan usa las evidencias del [informe](Practica-4.md). La verificación AWS en solo lectura del 24/11/2026 ya observó publicación reciente en Shadow y DynamoDB e invocaciones de la Lambda de histórico. La prueba de órdenes empleará el cliente virtual y conservará el SG90 aislado del control remoto.
 
 ## 1. Configuraciones afectadas
 
@@ -9,15 +9,20 @@ Base observada con el perfil `puerta-inteligente` en `us-east-2`. Los archivos c
 | Archivo o recurso | Situación y decisión |
 |---|---|
 | [Exportación sanitizada](../aws/config/deployed-sanitized.json) | Conservar como referencia de lo observado. Identifica los paquetes, roles y configuraciones actuales sin valores sensibles. Actualizar la exportación solo si cambia el recurso real. |
-| [Política IoT](../aws/config/iot-policy.proposed.json) | La versión activa v1 del proyecto original conserva ARN incompatibles. Para laboratorio, copiar la política y restringir `client/`, `topic/` y `topicfilter/` a la identidad y a los tópicos de `chapa-inteligente-9001` o al Thing reservado de la prueba. Mantener el certificado y la política separados de los de la chapa física. |
-| [Regla IoT](../aws/config/iot-rule.proposed.json) | La regla desplegada está habilitada y usa `SELECT …, * FROM 'chapa/+/events'`. Usar la proyección explícita local para derivar `thingName` y `ts` y preservar `eventId` sin incorporar campos no previstos. En laboratorio restringir el filtro a `chapa/<THING_LAB>/events` y dirigir la acción solo a la Lambda de laboratorio. Su permiso de invocación debe apuntar a esa regla. |
-| [Roles Lambda](../aws/config/lambda-roles.proposed.json) | Las dos funciones del proyecto original continúan con `PowerUserRole`. Usar la propuesta como referencia para limitar la Lambda de almacenamiento a la tabla y logs del laboratorio. La prueba de telemetría requiere la Lambda de histórico corregida. El backend Alexa desplegado sigue en la versión auditada y queda fuera de esta prueba. |
+| [Política IoT](../aws/config/iot-policy.proposed.json) | La versión activa es la **v2** y ya limita `iot:Connect` al cliente del Thing y `iot:Publish` a los dos tópicos necesarios; no concede `Receive` ni `Subscribe`. Para un laboratorio separado, conservar el certificado y la política separados de los de la chapa física. |
+| [Regla IoT](../aws/config/iot-rule.proposed.json) | La regla desplegada está habilitada, filtra `chapa/chapa-inteligente-01/events` y proyecta explícitamente `thingName`, `ts`, `eventId` y los campos del contrato. En laboratorio restringir el filtro a `chapa/<THING_LAB>/events` y dirigir la acción solo a la Lambda de laboratorio. Su permiso de invocación debe apuntar a esa regla. |
+| [Roles Lambda](../aws/config/lambda-roles.proposed.json) | Las dos funciones continúan con `PowerUserRole`. `chapa-almacenar-evento` tiene un paquete nuevo (`CodeSha256=OwGJItvs…`, 24/11 20:37Z), mientras que `chapa-skill-alexa` conserva el hash auditado. La propuesta sigue siendo referencia para reducir privilegios; no se ha aplicado. |
 | [Cliente virtual](../aws/config/virtual-device.example.json) | Crear una copia ignorada `virtual-device.local.json` con endpoint ATS, puerto 8883, Thing de laboratorio y rutas locales a la CA y al par X.509 de ese cliente. |
 | Shadow y DynamoDB | Usar Shadow clásico del Thing virtual y conservar el esquema PK `thingName` / SK `eventKey`, con TTL `ttl` en la tabla de histórico. Usar una tabla exclusiva del entorno aislado. La Lambda admite `HISTORY_TABLE` para seleccionarla. La tabla de vinculaciones y el modelo Alexa no requieren cambios para ensayar telemetría. |
 
-**Bloqueo de evidencia.** Los hashes de los dos paquetes desplegados coinciden con la auditoría anterior. La deduplicación condicional y el contrato corregido de Alexa se comprobaron con las fuentes locales. Una fila en el despliegue original no demostraría que las correcciones nuevas estén activas.
+**Bloqueo de evidencia.** Solo el hash de `chapa-skill-alexa` coincide con la auditoría anterior. El paquete de `chapa-almacenar-evento` cambió el 24/11 a las 20:37Z, pero el hash observado no identifica por sí solo qué revisiones del código local contiene. La deduplicación condicional y el contrato corregido de Alexa se comprobaron con las fuentes locales. Una fila reciente demuestra persistencia, no que la deduplicación corregida esté activa.
 
 ## 2. Validación real de telemetría, tras autorización
+
+El paso 5 ya tiene una observación parcial: 31 lecturas `edge` entre 21:44:18Z
+y 22:01:46Z, con `reported` reciente en el Shadow e invocaciones de la Lambda de
+histórico. No hay identificación del publicador ni repetición de `eventId`, por
+lo que la deduplicación real sigue inconclusa.
 
 1. Registrar el proyecto y la región autorizados, el endpoint ATS, el Thing virtual reservado `chapa-inteligente-9xxx`, la política, la regla, el hash de la Lambda de histórico y el nombre de su tabla. Verificar que no pertenecen a la chapa física. El proyecto aislado debe disponer del código corregido antes de medir deduplicación. Mantener el SG90 desconectado y usar la identidad de laboratorio para todo el tráfico.
 2. Leer el Shadow del Thing virtual. Preparar solo configuración, por ejemplo `desired.modo=manual` y `desired.autocierre_s=21`. La prueba de telemetría no necesita órdenes de movimiento ni modificaciones en Alexa.
@@ -39,20 +44,20 @@ Base observada con el perfil `puerta-inteligente` en `us-east-2`. Los archivos c
 | RF | Implementación y evidencia acreditable hoy | Pendiente de validación real |
 |---|---|---|
 | RF1 | Captura Reed/RFID implementada y cubierta por pruebas de firmware con sustitutos. | Comparar lecturas y presentaciones con el montaje. |
-| RF2 | El cliente virtual publica un snapshot válido por MQTT/TLS en loopback. | Adaptador del ESP32 y reporte físico periódico de sensores y estado del actuador. |
-| RF3 | El firmware confirma cierre por ESP-NOW en pruebas de escritorio. La demo local confirma órdenes con un actuador virtual. | Integrar consumidor Shadow con el controlador. El recorrido remoto con actuación física queda fuera de la prueba aislada y requiere una autorización distinta. |
+| RF2 | `AwsTelemetry` publica por cambio y cada 30 s. CLI observó 31 lecturas `edge` recientes y `reported` actualizado con `puerta=desconocida`. | Atribuir la publicación al ESP32 por monitor serie y obtener un Reed vigente. |
+| RF3 | El firmware confirma cierre por ESP-NOW en pruebas de escritorio. La demo local confirma órdenes con un actuador virtual. El `delta` real sigue sin aplicarse porque la placa no suscribe. | Integrar consumidor Shadow con el controlador solo con autorización. El recorrido remoto con actuación física queda fuera de la prueba aislada. |
 | RF4 | El backend local lee el Reed vigente en español. | Verificar frases en Alexa Console y lectura vigente alimentada por el objeto. |
 | RF5 | El backend local escribe `desired` y el actuador virtual ejecuta la orden válida. | Alexa Console y recorrido remoto integrado. Actuación física supeditada a autorización específica. |
 | RF6 | El backend local lee la estimación de cerradura y distingue estados desconocidos. | Probar frases y comparar el estado reportado con la posición real. |
 | RF7 | Alta por número entero y persistencia verificadas localmente con el sustituto de DynamoDB. | Verificar persistencia entre sesiones de Alexa. |
 | RF8 | Resolución por usuario, mensaje sin vínculo y separación de dos usuarios verificados localmente. | Confirmar en Alexa Console con identidades y Things autorizados. |
 | RF9 | Existencia, alta, reemplazo y desvinculación verificados localmente. | Mostrar esos cambios con registros autorizados de la demo. |
-| RF10 | Regla habilitada y permiso constatados en auditoría. Proyección SQL probada en simulación. | Publicación real del cliente de laboratorio y evidencia de invocación. |
-| RF11 | Validación, descarte, enriquecimiento y escritura condicional verificados con sustitutos. | Persistencia, latencia y deduplicación según §2. |
-| RF12 | Eventos de voz, RFID y Edge preservan origen en pruebas locales de histórico. | Capturar movimientos supervisados y verificar sus registros. |
+| RF10 | Regla activa y restringida al Thing; CloudWatch muestra invocaciones recientes de la Lambda de histórico. | Correlacionar una invocación con un `eventId` publicado desde la placa. |
+| RF11 | 31 filas reales con `eventId`, `ingresoTs` y `ttl`; latencia `ts`→`ingresoTs` de 0,695–2,413 s. Descarte y deduplicación probados con sustitutos. | Repetir un ID real, publicar un mensaje inválido y medir integridad con denominador completo. |
+| RF12 | Las filas recientes son solo `lectura`/`edge`. Las tres filas antiguas son `acceso`/`rfid`; voz existe solo en la demo virtual. | Capturar movimientos supervisados de RFID, voz y Edge con su `origen` y `resultado`. |
 | RF13 | Autocierre y confirmación ESP-NOW implementados y probados con reloj, radio y actuador simulados. | Medir autocierre y verificar interbloqueos bajo supervisión local. |
-| RF14 | En loopback se aplicaron parámetros del Shadow y se publicaron los valores aplicados. Las Lambda locales verifican la consulta y el cambio. | Validar Shadow AWS real, configuración en el ESP32 y frases de Alexa. |
-| RF15 | **Acreditable como entregable de diseño.** [Mockups y consultas](mockups-reportes.md) trazados a la tabla existente. | Adjuntar muestras anonimizadas como evidencia global de la práctica. |
+| RF14 | Shadow real reporta `modo=automatico` y `autocierre_s=10`; en loopback se aplicaron parámetros y las Lambda locales verifican consulta y cambio. | Consultar y modificar por voz, y explicar por qué el `desired` actual sigue pendiente en la placa. |
+| RF15 | **Acreditable como entregable de diseño.** [Mockups, diccionario y muestra anonimizada real](mockups-reportes.md) trazados a la tabla existente. | Adjuntar muestras de la demo integrada con voz, RFID y Edge. |
 
 ## 4. Lista de comprobación física bajo supervisión
 
@@ -65,6 +70,8 @@ Base observada con el perfil `puerta-inteligente` en `us-east-2`. Los archivos c
 
 ## 5. Revisión de datos sensibles
 
-La revisión por patrones cubrió 69 archivos del árbol de trabajo y 176 blobs históricos de las referencias Git locales. No detectó claves AWS, asignaciones de secretos, certificados, claves privadas ni contenedores de claves. Las plantillas incluyen marcadores y rutas vacías. Los archivos de configuración privada y los formatos PEM, KEY y CRT están excluidos.
+La nueva revisión con `git grep` cubrió el árbol versionado y todas las referencias Git locales. No detectó IDs de clave AWS, asignaciones de secretos, certificados PEM, claves privadas ni nombres de archivo `*.pem`, `*.key`, `*.crt` o `*.local.json` versionados. Las plantillas conservan marcadores. No se modificó el historial.
+
+**Material privado fuera de Git.** `firmware/esp32_control/include/aws_telemetry_config.h` existe en el árbol de trabajo, está ignorado y no está versionado, y contiene certificado, clave privada y contraseña WiFi. Debe permanecer fuera de cualquier commit, artefacto o captura. Si se compartió en algún momento, rotar ese par X.509 y esa contraseña.
 
 **Hallazgo preexistente.** El README incluye una MAC observada y el README y la configuración de control incluyen UID RFID de prototipo. Son identificadores del montaje y los UID forman parte de su autorización local. Tratar los UID como sensibles si corresponden a tarjetas reales. Para distribuir el repositorio, considerar muestras ficticias y provisión local y reemplazar las tarjetas registradas si sus UID se reutilizan. Este cierre conserva el firmware y el historial existente.
