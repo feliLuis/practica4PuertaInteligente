@@ -129,8 +129,11 @@ class VirtualLock:
         self.history_handler = history_handler
         self.moves = []
         self.acknowledged = set()
+        self.online = True
 
     def reconcile(self, now=NOW):
+        if not self.online:
+            return
         doc = self.cloud.documents[THING]
         state = doc["state"]
         desired = state["desired"]
@@ -311,6 +314,65 @@ class LocalIntegration(unittest.TestCase):
         self.lock.reconcile(NOW + 1500)
         self.assertEqual((self.reported["modo"], self.reported["autocierre_s"]), ("manual", 15))
         self.assertFalse(self.lock.moves)
+
+    def test_telemetry_contract_persists_distinct_readings_and_sources(self):
+        samples = [
+            {"tipo": "lectura", "puerta": "cerrada", "origen": "edge"},
+            {"tipo": "puerta", "puerta": "abierta", "origen": "edge"},
+            {"tipo": "acceso", "origen": "rfid", "credentialId": "tarjeta-1"},
+            {"tipo": "desbloqueo", "origen": "rfid", "cerradura": "desbloqueada"},
+            {"tipo": "bloqueo", "origen": "edge", "cerradura": "bloqueada"},
+        ]
+        for index, sample in enumerate(samples):
+            payload = self.sample(eventId=f"{NOW - 10 + index}#{'c' * 32}", **sample)
+            payload["uid"] = "excluded-by-rule"
+            self.assertEqual(self.publish(payload)["statusCode"], 200)
+            self.assertTrue(json.loads(self.publish(payload, NOW + 10)["body"])["duplicado"])
+        rows = sorted(self.cloud.history.items.values(), key=lambda row: row["eventKey"])
+        self.assertEqual([(row["tipo"], row["origen"]) for row in rows],
+                         [(sample["tipo"], sample["origen"]) for sample in samples])
+        self.assertTrue(all("uid" not in row for row in rows))
+
+    def test_valid_pending_order_applies_only_after_virtual_reconnection(self):
+        self.lock.online = False
+        self.assertIn("Envié", self.invoke("AbrirIntent"))
+        self.lock.reconcile(NOW + 1000)
+        self.assertIn("orden", self.desired)
+        self.assertFalse(self.lock.moves)
+        self.assertFalse(self.cloud.history.items)
+        self.lock.online = True
+        self.lock.reconcile(NOW + 2000)
+        self.assertNotIn("orden", self.desired)
+        self.assertEqual(self.lock.moves, ["desbloqueada"])
+        self.assertEqual(self.reported["ordenResultado"]["resultado"], "ejecutado")
+        self.assertEqual(len(self.cloud.history.items), 1)
+
+    def test_blocked_configuration_precedes_pending_motion(self):
+        self.assertIn("Envié", self.invoke("AbrirIntent"))
+        self.invoke("CambiarModoIntent", {"modo": {"value": "bloqueado"}})
+        self.lock.reconcile(NOW + 1000)
+        self.assertEqual(self.reported["modo"], "bloqueado")
+        self.assertEqual(self.reported["ordenResultado"]["resultado"], "rechazado")
+        self.assertNotIn("orden", self.desired)
+        self.assertFalse(self.lock.moves)
+        self.assertFalse(self.cloud.history.items)
+
+    def test_proposed_policy_matches_device_and_shadow_topics(self):
+        policy = {entry["Action"]: entry["Resource"]
+                  for entry in read_json(CONFIG / "iot-policy.proposed.json")["Statement"]}
+        device = read_json(CONFIG / "device.example.json")
+        prefix = f"arn:aws:iot:{device['region']}:<ACCOUNT_ID>:"
+        shadow = f"$aws/things/{device['thingName']}/shadow"
+        self.assertEqual(policy["iot:Connect"], prefix + f"client/{device['clientId']}")
+        self.assertEqual(set(policy["iot:Publish"]), {
+            prefix + f"topic/chapa/{THING}/events", prefix + f"topic/{shadow}/get",
+            prefix + f"topic/{shadow}/update",
+        })
+        response_suffixes = ("get/accepted", "get/rejected", "update/accepted",
+                             "update/rejected", "update/delta")
+        for action, resource_type in (("iot:Subscribe", "topicfilter"), ("iot:Receive", "topic")):
+            self.assertEqual(set(policy[action]),
+                             {prefix + f"{resource_type}/{shadow}/{suffix}" for suffix in response_suffixes})
 
     def test_history_deduplicates_across_rule_timestamps(self):
         first = self.publish(self.sample(thingName="other", ts=1))

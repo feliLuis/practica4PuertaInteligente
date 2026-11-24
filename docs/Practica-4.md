@@ -304,6 +304,7 @@ La suite nueva [`test_aws_integration.py`](../tests/test_aws_integration.py) imp
 |---|---|
 | Suite existente de firmware, Zig C++ | **32/32** con hardware simulado. 29 de control y una por cada variante de consola |
 | Integración local de las Lambdas corregidas | **16/16** pruebas, con casos parametrizados. La misma publicación con dos tiempos de ingreso produjo una fila. Una orden válida movió el actuador virtual y dejó confirmación e histórico. Órdenes vencidas o incompatibles no lo movieron |
+| Ampliación de la demo simulada | **20/20** pruebas en total y el caso de voz ejecutado también por separado. Los cinco mensajes de la muestra, publicados dos veces cada uno, dejaron cinco filas únicas con su origen. La orden pendiente se aplicó una vez tras la reconexión virtual. El modo bloqueado prevaleció sobre una orden simultánea. Se comprobó la correspondencia de los tópicos con los ARN de la política propuesta |
 | Pruebas previas del backend auditado | **37 casos simulados**. Sirven de línea base para slots, formato de solicitudes y defectos observados antes de las correcciones |
 | Compilación PlatformIO | **5/5**. Control: `esp32dev`, `simulation` y `calibration`. Sensores: `esp32dev` y `diagnostic`. Es el firmware actual, con el enlace y el adaptador pendientes |
 | Histórico auditado en DynamoDB | Tres filas leídas para el Thing en una consulta limitada. Las tres tenían `tipo`, `origen`, `resultado` y `puerta`. Una incluía `cerradura` y una incluía `seq` y `diferido`. Se registraron atributos y tipos; esta evidencia no atribuye origen físico ni mide rendimiento |
@@ -323,4 +324,5 @@ Completar la integración en una prueba coordinada: publicar un estado reciente,
 - [Modelo original Alexa y frases en español](../aws/alexa/interaction-model/es-MX.json).
 - [Exportación sanitizada](../aws/config/deployed-sanitized.json) y [mockups RF15](mockups-reportes.md).
 - [Pruebas reproducibles con actuador virtual](../tests/test_aws_integration.py).
+- [Guía para revisar el proyecto AWS en solo lectura](revision-aws.md).
 - Pendientes las fotografías, capturas de la demo y muestras de histórico vinculadas a IDs de la prueba integrada.

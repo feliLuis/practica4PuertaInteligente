@@ -1,5 +1,45 @@
 # Chapa inteligente — adaptación local de la Práctica 4
 
+El entregable reúne el [informe técnico y la matriz RF1–RF15](docs/Practica-4.md),
+los [mockups RF15](docs/mockups-reportes.md) y la
+[guía de revisión AWS](docs/revision-aws.md). El firmware de las placas y
+la integración AWS se verifican por separado. La demo de esta versión usa
+un dispositivo y un actuador virtuales.
+
+## Ejecución y demostración simulada
+
+Desde la raíz del repositorio, ejecutar con Python 3.13. La demostración
+usa la biblioteca estándar y sustituye boto3, IoT Rules, Shadow, DynamoDB
+y el servo por simuladores. Funciona sin credenciales AWS ni placas conectadas.
+
+```powershell
+python -B -m unittest discover -s tests -p 'test_aws_integration.py' -v
+```
+
+Para mostrar únicamente el recorrido de voz hasta el histórico:
+
+```powershell
+python -B tests/test_aws_integration.py LocalIntegration.test_voice_shadow_virtual_actuator_history_round_trip -v
+```
+
+La prueba genera una solicitud de Alexa, escribe `desired`, verifica que el
+actuador virtual sigue quieto hasta reconciliar el Shadow, confirma en
+`reported` y comprueba una fila de histórico de origen `voz`. La suite completa
+incluye telemetría Reed y RFID, duplicados, comandos incompatibles y
+recuperación tras una desconexión simulada.
+
+```powershell
+& "$env:USERPROFILE/.platformio/penv/Scripts/python.exe" tests/run_tests.py
+$pio = "$env:USERPROFILE/.platformio/penv/Scripts/platformio.exe"
+& $pio run -d firmware/esp32_control -e esp32dev -e simulation -e calibration
+& $pio run -d firmware/esp32_sensors -e esp32dev -e diagnostic
+```
+
+Las compilaciones anteriores generan binarios locales. Para la demostración
+académica quedan pendientes MQTT/TLS en el ESP32 de control, el enlace entre
+placas, Alexa Developer Console y las mediciones físicas descritas en el
+[informe](docs/Practica-4.md#4-pruebas-y-validaciones).
+
 Firmware modular para dos ESP32 de 38 pines. Esta fase contiene lógica local,
 sensores y diagnósticos individuales. **No contiene ESP-NOW, WiFi, MQTT, NTP,
 AWS ni comunicación real entre placas.** `SerialLink` solo imprime mensajes
