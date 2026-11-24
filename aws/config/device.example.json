@@ -1,0 +1,13 @@
+{
+  "region": "us-east-2",
+  "thingName": "chapa-inteligente-01",
+  "clientId": "chapa-inteligente-01",
+  "mqttPort": 8883,
+  "iotDataEndpoint": "",
+  "wifiSsid": "",
+  "wifiPassword": "",
+  "rootCaFile": "",
+  "certificateFile": "",
+  "privateKeyFile": "",
+  "shadowReportSeconds": 30
+}

@@ -1,0 +1,13 @@
+{
+  "ruleName": "ChapaEventosRule",
+  "ruleDisabled": false,
+  "awsIotSqlVersion": "2016-03-23",
+  "actions": [
+    {
+      "lambda": {
+        "functionArn": "arn:aws:lambda:us-east-2:<ACCOUNT_ID>:function:chapa-almacenar-evento"
+      }
+    }
+  ],
+  "sql": "SELECT topic(2) AS thingName, timestamp() AS ts, eventId, tipo, origen, resultado, puerta, cerradura, modo, motivo, credentialId, seq, diferido, autocierre_s, simulado FROM 'chapa/+/events'"
+}

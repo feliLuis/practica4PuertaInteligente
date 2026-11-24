@@ -1,0 +1,174 @@
+{
+    "interactionModel": {
+        "languageModel": {
+            "invocationName": "chapa inteligente",
+            "intents": [
+                {
+                    "name": "AMAZON.CancelIntent",
+                    "samples": []
+                },
+                {
+                    "name": "AMAZON.HelpIntent",
+                    "samples": []
+                },
+                {
+                    "name": "AMAZON.StopIntent",
+                    "samples": []
+                },
+                {
+                    "name": "AMAZON.FallbackIntent",
+                    "samples": []
+                },
+                {
+                    "name": "VincularIntent",
+                    "slots": [
+                        {
+                            "name": "numeroSerie",
+                            "type": "AMAZON.NUMBER"
+                        }
+                    ],
+                    "samples": [
+                        "vincula mi chapa con el número {numeroSerie}",
+                        "vincula mi chapa con la unidad {numeroSerie}",
+                        "conecta mi chapa con el número {numeroSerie}",
+                        "registra mi chapa número {numeroSerie}"
+                    ]
+                },
+                {
+                    "name": "DesvincularIntent",
+                    "slots": [],
+                    "samples": [
+                        "desvincula mi chapa",
+                        "elimina la vinculación de mi chapa",
+                        "olvida mi chapa"
+                    ]
+                },
+                {
+                    "name": "EstadoPuertaIntent",
+                    "slots": [],
+                    "samples": [
+                        "está cerrada la puerta",
+                        "cómo está la puerta",
+                        "estado de la puerta",
+                        "la puerta está abierta"
+                    ]
+                },
+                {
+                    "name": "EstadoCerraduraIntent",
+                    "slots": [],
+                    "samples": [
+                        "está bloqueada la chapa",
+                        "cómo está la chapa",
+                        "estado de la chapa",
+                        "el cerrojo está bloqueado"
+                    ]
+                },
+                {
+                    "name": "AbrirIntent",
+                    "slots": [],
+                    "samples": [
+                        "abre la puerta",
+                        "desbloquea la chapa",
+                        "abre la chapa",
+                        "desbloquea la puerta"
+                    ]
+                },
+                {
+                    "name": "CerrarIntent",
+                    "slots": [],
+                    "samples": [
+                        "bloquea la chapa",
+                        "bloquea la puerta",
+                        "cierra la chapa con llave",
+                        "echa llave"
+                    ]
+                },
+                {
+                    "name": "ConsultarModoIntent",
+                    "slots": [],
+                    "samples": [
+                        "en qué modo está la chapa",
+                        "cuál es el modo de la chapa",
+                        "qué modo tiene la chapa"
+                    ]
+                },
+                {
+                    "name": "CambiarModoIntent",
+                    "slots": [
+                        {
+                            "name": "modo",
+                            "type": "ModoOperacion"
+                        }
+                    ],
+                    "samples": [
+                        "cambia el modo a {modo}",
+                        "pon la chapa en modo {modo}",
+                        "activa el modo {modo}"
+                    ]
+                },
+                {
+                    "name": "ConsultarAutocierreIntent",
+                    "slots": [],
+                    "samples": [
+                        "cuál es el tiempo de autocierre",
+                        "cuánto tarda en bloquearse sola",
+                        "en cuánto tiempo se cierra sola la chapa"
+                    ]
+                },
+                {
+                    "name": "CambiarAutocierreIntent",
+                    "slots": [
+                        {
+                            "name": "segundos",
+                            "type": "AMAZON.NUMBER"
+                        }
+                    ],
+                    "samples": [
+                        "cambia el autocierre a {segundos} segundos",
+                        "que se bloquee sola en {segundos} segundos",
+                        "pon el tiempo de autocierre en {segundos} segundos"
+                    ]
+                },
+                {
+                    "name": "AMAZON.NavigateHomeIntent",
+                    "samples": []
+                }
+            ],
+            "types": [
+                {
+                    "name": "ModoOperacion",
+                    "values": [
+                        {
+                            "id": "manual",
+                            "name": {
+                                "value": "manual",
+                                "synonyms": [
+                                    "manualmente"
+                                ]
+                            }
+                        },
+                        {
+                            "id": "automatico",
+                            "name": {
+                                "value": "automático",
+                                "synonyms": [
+                                    "automatico",
+                                    "automática"
+                                ]
+                            }
+                        },
+                        {
+                            "id": "bloqueado",
+                            "name": {
+                                "value": "bloqueado",
+                                "synonyms": [
+                                    "bloqueo"
+                                ]
+                            }
+                        }
+                    ]
+                }
+            ]
+        }
+    }
+}

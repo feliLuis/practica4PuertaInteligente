@@ -4,3 +4,4 @@
 *.key
 *.crt
 secrets.h
+aws/config/device.local.json
