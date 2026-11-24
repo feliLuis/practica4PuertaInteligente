@@ -1,0 +1,7 @@
+{
+  "name": "Protocol",
+  "version": "1.0.0",
+  "description": "Compact protocol for local smart lock communication",
+  "frameworks": ["arduino"],
+  "platforms": ["espressif32"]
+}

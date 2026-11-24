@@ -1,7 +1,0 @@
-{
-  "name": "Protocolo",
-  "version": "1.0.0",
-  "description": "Contrato compacto para la comunicacion local de la chapa inteligente",
-  "frameworks": ["arduino"],
-  "platforms": ["espressif32"]
-}

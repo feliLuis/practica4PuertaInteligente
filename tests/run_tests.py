@@ -1,4 +1,4 @@
-"""Compila y ejecuta las pruebas de control y consola con hardware simulado."""
+"""Build and run controller and console tests with simulated hardware."""
 import os
 from pathlib import Path
 import shlex
@@ -10,46 +10,46 @@ REPO = Path(__file__).resolve().parents[1]
 BUILD = REPO / ".pio" / "tests"
 
 
-def compilador():
+def find_compiler():
     if os.environ.get("CXX"):
         return shlex.split(os.environ["CXX"], posix=os.name != "nt")
-    for nombre in ("g++", "clang++"):
-        ruta = shutil.which(nombre)
-        if ruta:
-            return [ruta]
+    for name in ("g++", "clang++"):
+        path = shutil.which(name)
+        if path:
+            return [path]
     zig = REPO / ".pio" / "host-tools" / "ziglang" / ("zig.exe" if os.name == "nt" else "zig")
     if zig.is_file():
         return [str(zig), "c++"]
-    raise SystemExit("No hay compilador C++ de escritorio. Configure CXX con g++/clang++ "
-                     "o use el Zig portatil descrito en README. No se ejecutaron pruebas.")
+    raise SystemExit("No desktop C++ compiler found. Set CXX to g++ or clang++, "
+                     "or use portable Zig as described in the README. No tests were run.")
 
 
 def main():
-    cxx = compilador()
+    cxx = find_compiler()
     BUILD.mkdir(parents=True, exist_ok=True)
-    entorno = os.environ.copy()
-    # Toda la cache del compilador de pruebas queda en el proyecto e ignorada por Git.
-    entorno["ZIG_GLOBAL_CACHE_DIR"] = str(BUILD / "zig-cache")
+    environment = os.environ.copy()
+    # Keep the test compiler cache inside the project and ignored by Git.
+    environment["ZIG_GLOBAL_CACHE_DIR"] = str(BUILD / "zig-cache")
     control = "firmware/esp32_control"
-    comun = ["tests/stubs/Falsos.cpp", "shared/Protocolo/src/Protocolo.cpp"]
-    logica = [f"{control}/src/ControladorCerradura.cpp", f"{control}/src/ListaCredenciales.cpp"]
-    actuador = [f"{control}/src/ServoCerrojo.cpp"]
-    trabajos = [("control", control, ["tests/control_tests.cpp"] + logica + actuador, [])]
-    for nombre, simulacion, calibracion in (("normal", 0, 0), ("simulacion", 1, 0), ("calibracion", 0, 1)):
-        trabajos.append(("consola_" + nombre, control, ["tests/consola_tests.cpp"] + logica +
-                         ([] if simulacion else actuador),
-                         [f"-DMODO_SIMULACION={simulacion}", f"-DMODO_CALIBRACION={calibracion}"]))
-    print("Compilador:", " ".join(cxx), flush=True)
-    subprocess.run(cxx + ["--version"], check=True, env=entorno)
-    for nombre, proyecto, fuentes, flags in trabajos:
-        destino = BUILD / (nombre + (".exe" if os.name == "nt" else ""))
-        comando = cxx + ["-std=c++11", "-Wall", "-Wextra", "-Werror",
-                         "-Itests/stubs", "-Itests", f"-I{proyecto}/include",
-                         "-Ishared/Protocolo/src"] + flags + fuentes + comun + ["-o", str(destino)]
-        print("\nCompilando y ejecutando", nombre, flush=True)
-        subprocess.run(comando, cwd=REPO, env=entorno, check=True)
-        subprocess.run([str(destino)], cwd=REPO, env=entorno, check=True)
-    print("\nTodas las suites finalizaron correctamente. Son pruebas simuladas, no fisicas.", flush=True)
+    common = ["tests/stubs/Fakes.cpp", "shared/Protocol/src/Protocol.cpp"]
+    logic = [f"{control}/src/LockController.cpp", f"{control}/src/CredentialList.cpp"]
+    actuator = [f"{control}/src/LockServo.cpp"]
+    jobs = [("control", control, ["tests/control_tests.cpp"] + logic + actuator, [])]
+    for name, simulation, calibration in (("normal", 0, 0), ("simulation", 1, 0), ("calibration", 0, 1)):
+        jobs.append(("console_" + name, control, ["tests/console_tests.cpp"] + logic +
+                         ([] if simulation else actuator),
+                         [f"-DSIMULATION_MODE={simulation}", f"-DCALIBRATION_MODE={calibration}"]))
+    print("Compiler:", " ".join(cxx), flush=True)
+    subprocess.run(cxx + ["--version"], check=True, env=environment)
+    for name, project, sources, flags in jobs:
+        target = BUILD / (name + (".exe" if os.name == "nt" else ""))
+        command = cxx + ["-std=c++11", "-Wall", "-Wextra", "-Werror",
+                         "-Itests/stubs", "-Itests", f"-I{project}/include",
+                         "-Ishared/Protocol/src"] + flags + sources + common + ["-o", str(target)]
+        print("\nBuilding and running", name, flush=True)
+        subprocess.run(command, cwd=REPO, env=environment, check=True)
+        subprocess.run([str(target)], cwd=REPO, env=environment, check=True)
+    print("\nAll suites passed using simulated hardware.", flush=True)
 
 
 if __name__ == "__main__":

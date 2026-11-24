@@ -1,298 +1,298 @@
-#include "Soporte.h"
-#include "ControladorCerradura.h"
-#include "ServoCerrojo.h"
-#include "MonitorSerie.h"
+#include "TestSupport.h"
+#include "LockController.h"
+#include "LockServo.h"
+#include "SerialMonitor.h"
 #include "config.h"
 #include <vector>
 #include <cstring>
 
-using Puerta = Protocolo::EstadoPuerta;
-const Origen diagnostico = Origen::DIAGNOSTICO;
-struct Banco {
-  ControladorCerradura c{true};
-  std::vector<Evento> eventos;
-  int movimientos = 0;
-  bool emitirOrden = true;
-  Banco() {
-    c.registrarEvento([this](const Evento& e) { eventos.push_back(e); });
-    c.registrarMovimiento([this](Accion) { ++movimientos; return emitirOrden; });
+using Door = Protocol::DoorState;
+const Source diagnostic = Source::DIAGNOSTIC;
+struct Harness {
+  LockController c{true};
+  std::vector<Event> events;
+  int movements = 0;
+  bool issueCommand = true;
+  Harness() {
+    c.onEvent([this](const Event& e) { events.push_back(e); });
+    c.onMovement([this](Action) { ++movements; return issueCommand; });
   }
-  void cerrar() { c.actualizarPuerta(Puerta::CERRADA, diagnostico); }
-  void abrir() { c.actualizarPuerta(Puerta::ABIERTA, diagnostico); }
-  Resultado desbloquear() { return c.procesarAccion(Accion::DESBLOQUEAR, diagnostico); }
-  Resultado bloquear() { return c.procesarAccion(Accion::BLOQUEAR, diagnostico); }
-  size_t contar(TipoEvento tipo) const {
+  void close() { c.updateDoor(Door::CLOSED, diagnostic); }
+  void open() { c.updateDoor(Door::OPEN, diagnostic); }
+  Result unlock() { return c.processAction(Action::UNLOCK, diagnostic); }
+  Result lock() { return c.processAction(Action::LOCK, diagnostic); }
+  size_t count(EventType type) const {
     size_t total = 0;
-    for (const auto& e : eventos) if (e.tipo == tipo) ++total;
+    for (const auto& e : events) if (e.type == type) ++total;
     return total;
   }
 };
-bool aceptado(Resultado r) { return r.resultado == ResultadoEvento::EJECUTADO; }
+bool accepted(Result r) { return r.result == EventResult::EXECUTED; }
 
 int main() {
   Suite s;
-  s.caso("arranque desconocido sin movimientos", [] {
-    Banco b; COMPROBAR(b.c.cerradura() == EstadoCerradura::DESCONOCIDA);
-    COMPROBAR(b.c.puerta() == Puerta::DESCONOCIDA);
-    COMPROBAR(b.c.modo() == Modo::AUTOMATICO); COMPROBAR(b.c.autocierreSegundos() == 10);
-    COMPROBAR(b.movimientos == 0 && !b.c.sensorVigente());
+  s.testCase("unknown startup state without movement", [] {
+    Harness b; CHECK(b.c.lockState() == LockState::UNKNOWN);
+    CHECK(b.c.doorState() == Door::UNKNOWN);
+    CHECK(b.c.mode() == Mode::AUTOMATIC); CHECK(b.c.autoLockSeconds() == 10);
+    CHECK(b.movements == 0 && !b.c.sensorIsFresh());
   });
-  s.caso("bloqueo cerrado vigente", [] {
-    Banco b; b.cerrar(); COMPROBAR(aceptado(b.bloquear()));
-    COMPROBAR(b.movimientos == 1 && b.c.cerradura() == EstadoCerradura::BLOQUEADA);
+  s.testCase("lock with a recent closed-door reading", [] {
+    Harness b; b.close(); CHECK(accepted(b.lock()));
+    CHECK(b.movements == 1 && b.c.lockState() == LockState::LOCKED);
   });
-  s.caso("rechazo puerta abierta", [] {
-    Banco b; b.abrir(); COMPROBAR(!aceptado(b.bloquear())); COMPROBAR(b.movimientos == 0);
+  s.testCase("reject locking with the door open", [] {
+    Harness b; b.open(); CHECK(!accepted(b.lock())); CHECK(b.movements == 0);
   });
-  s.caso("rechazo desconocida y valores invalidos", [] {
-    Banco b; COMPROBAR(!aceptado(b.bloquear()));
-    COMPROBAR(!b.c.actualizarPuerta(static_cast<Puerta>(255)));
-    COMPROBAR(!b.c.recibirLatido()); COMPROBAR(!b.c.sensorVigente());
-    COMPROBAR(!aceptado(b.c.procesarAccion(static_cast<Accion>(255), diagnostico)));
-    COMPROBAR(b.movimientos == 0);
+  s.testCase("reject locking with unknown or invalid door state", [] {
+    Harness b; CHECK(!accepted(b.lock()));
+    CHECK(!b.c.updateDoor(static_cast<Door>(255)));
+    CHECK(!b.c.receiveHeartbeat()); CHECK(!b.c.sensorIsFresh());
+    CHECK(!accepted(b.c.processAction(static_cast<Action>(255), diagnostic)));
+    CHECK(b.movements == 0);
   });
-  s.caso("rechazo timeout incluso sin actualizar previo", [] {
-    Banco b; b.cerrar(); Falso::ahora = 30000;
-    COMPROBAR(b.c.puerta() == Puerta::DESCONOCIDA);
-    COMPROBAR(!aceptado(b.bloquear())); COMPROBAR(b.movimientos == 0);
+  s.testCase("reject stale sensor data before the next update", [] {
+    Harness b; b.close(); Fake::now = 30000;
+    CHECK(b.c.doorState() == Door::UNKNOWN);
+    CHECK(!accepted(b.lock())); CHECK(b.movements == 0);
   });
-  s.caso("tarjeta autoriza y conserva identificador logico", [] {
-    Banco b; const uint8_t uid[] = {0x39, 0x61, 0xD7, 0x06};
-    COMPROBAR(std::memcmp(uid, Config::UID_TARJETA, sizeof(uid)) == 0);
-    COMPROBAR(aceptado(b.c.procesarUid(uid, sizeof(uid))));
-    COMPROBAR(b.c.cerradura() == EstadoCerradura::DESBLOQUEADA);
-    COMPROBAR(b.contar(TipoEvento::ACCESO) == 1);
-    COMPROBAR(b.contar(TipoEvento::DESBLOQUEO) == 1);
-    COMPROBAR(std::strcmp(b.eventos.back().credentialId, "tarjeta-1") == 0);
+  s.testCase("card authorizes access and preserves the logical ID", [] {
+    Harness b; const uint8_t uid[] = {0x39, 0x61, 0xD7, 0x06};
+    CHECK(std::memcmp(uid, Config::CARD_UID, sizeof(uid)) == 0);
+    CHECK(accepted(b.c.processUid(uid, sizeof(uid))));
+    CHECK(b.c.lockState() == LockState::UNLOCKED);
+    CHECK(b.count(EventType::ACCESS) == 1);
+    CHECK(b.count(EventType::UNLOCK) == 1);
+    CHECK(std::strcmp(b.events.back().credentialId, "tarjeta-1") == 0);
   });
-  s.caso("llavero desbloquea sin requerir lectura y conserva identificador", [] {
-    Banco b; const uint8_t uid[] = {0x9C, 0x31, 0x8B, 0x06};
-    COMPROBAR(std::memcmp(uid, Config::UID_LLAVERO, sizeof(uid)) == 0);
-    COMPROBAR(aceptado(b.c.procesarUid(uid, sizeof(uid))));
-    COMPROBAR(b.c.cerradura() == EstadoCerradura::DESBLOQUEADA);
-    COMPROBAR(std::strcmp(b.eventos.back().credentialId, "llavero-1") == 0);
-    COMPROBAR(b.movimientos == 1 && b.contar(TipoEvento::ACCESO) == 1);
-    COMPROBAR(b.contar(TipoEvento::DESBLOQUEO) == 1 && b.contar(TipoEvento::BLOQUEO) == 0);
+  s.testCase("key fob unlocks without a door reading and preserves the ID", [] {
+    Harness b; const uint8_t uid[] = {0x9C, 0x31, 0x8B, 0x06};
+    CHECK(std::memcmp(uid, Config::KEYFOB_UID, sizeof(uid)) == 0);
+    CHECK(accepted(b.c.processUid(uid, sizeof(uid))));
+    CHECK(b.c.lockState() == LockState::UNLOCKED);
+    CHECK(std::strcmp(b.events.back().credentialId, "llavero-1") == 0);
+    CHECK(b.movements == 1 && b.count(EventType::ACCESS) == 1);
+    CHECK(b.count(EventType::UNLOCK) == 1 && b.count(EventType::LOCK) == 0);
   });
-  s.caso("lista impide registrar bloqueo incluso al reemplazar credencial", [] {
-    ListaCredenciales lista;
-    COMPROBAR(!lista.agregar(Config::UID_LLAVERO, Config::UID_LLAVERO_LONGITUD,
-                            Accion::BLOQUEAR, Config::ID_LLAVERO));
-    Accion accion = Accion::BLOQUEAR; const char* id = nullptr;
-    COMPROBAR(!lista.buscar(Config::UID_LLAVERO, Config::UID_LLAVERO_LONGITUD, accion, id));
-    COMPROBAR(lista.agregar(Config::UID_LLAVERO, Config::UID_LLAVERO_LONGITUD,
-                           Accion::DESBLOQUEAR, Config::ID_LLAVERO));
-    COMPROBAR(!lista.agregar(Config::UID_LLAVERO, Config::UID_LLAVERO_LONGITUD,
-                            Accion::BLOQUEAR, "otro-id"));
-    COMPROBAR(!lista.agregar(Config::UID_LLAVERO, Config::UID_LLAVERO_LONGITUD,
-                            static_cast<Accion>(255), Config::ID_LLAVERO));
-    COMPROBAR(lista.buscar(Config::UID_LLAVERO, Config::UID_LLAVERO_LONGITUD, accion, id));
-    COMPROBAR(accion == Accion::DESBLOQUEAR && std::strcmp(id, "llavero-1") == 0);
+  s.testCase("credential list rejects lock actions even on replacement", [] {
+    CredentialList lista;
+    CHECK(!lista.add(Config::KEYFOB_UID, Config::KEYFOB_UID_LENGTH,
+                            Action::LOCK, Config::KEYFOB_ID));
+    Action action = Action::LOCK; const char* id = nullptr;
+    CHECK(!lista.buscar(Config::KEYFOB_UID, Config::KEYFOB_UID_LENGTH, action, id));
+    CHECK(lista.add(Config::KEYFOB_UID, Config::KEYFOB_UID_LENGTH,
+                           Action::UNLOCK, Config::KEYFOB_ID));
+    CHECK(!lista.add(Config::KEYFOB_UID, Config::KEYFOB_UID_LENGTH,
+                            Action::LOCK, "otro-id"));
+    CHECK(!lista.add(Config::KEYFOB_UID, Config::KEYFOB_UID_LENGTH,
+                            static_cast<Action>(255), Config::KEYFOB_ID));
+    CHECK(lista.buscar(Config::KEYFOB_UID, Config::KEYFOB_UID_LENGTH, action, id));
+    CHECK(action == Action::UNLOCK && std::strcmp(id, "llavero-1") == 0);
   });
-  s.caso("ambas credenciales desbloquean a 90 en manual y automatico sin alternar", [] {
-    const uint8_t* uids[] = {Config::UID_TARJETA, Config::UID_LLAVERO};
-    for (Modo modo : {Modo::MANUAL, Modo::AUTOMATICO}) {
+  s.testCase("both credentials unlock to 90 in manual and automatic modes without toggling", [] {
+    const uint8_t* uids[] = {Config::CARD_UID, Config::KEYFOB_UID};
+    for (Mode mode : {Mode::MANUAL, Mode::AUTOMATIC}) {
       for (const uint8_t* uid : uids) {
-        Banco b; ServoCerrojo servo(Config::PIN_SERVO, Config::SERVO_DETACH_MS);
-        COMPROBAR(servo.begin()); b.c.establecerModo(modo, diagnostico); b.cerrar();
-        b.c.registrarMovimiento([&](Accion accion) {
-          ++b.movimientos;
-          return accion == Accion::DESBLOQUEAR ? servo.desbloquear() : servo.bloquear();
+        Harness b; LockServo servo(Config::PIN_SERVO, Config::SERVO_DETACH_MS);
+        CHECK(servo.begin()); b.c.setMode(mode, diagnostic); b.close();
+        b.c.onMovement([&](Action action) {
+          ++b.movements;
+          return action == Action::UNLOCK ? servo.unlock() : servo.lock();
         });
-        COMPROBAR(aceptado(b.bloquear()) && Falso::ultimoAngulo == 0);
-        const int previas = Falso::escrituras;
-        COMPROBAR(aceptado(b.c.procesarUid(uid, 4)));
-        COMPROBAR(Falso::ultimoAngulo == 90 && Falso::escrituras == previas + 1);
-        COMPROBAR(b.c.cerradura() == EstadoCerradura::DESBLOQUEADA);
-        for (const uint8_t* repetida : uids) COMPROBAR(aceptado(b.c.procesarUid(repetida, 4)));
-        COMPROBAR(Falso::escrituras == previas + 1 && b.movimientos == 2);
-        COMPROBAR(b.c.cerradura() == EstadoCerradura::DESBLOQUEADA);
-        COMPROBAR(b.contar(TipoEvento::DESBLOQUEO) == 1 && b.contar(TipoEvento::BLOQUEO) == 1);
-        COMPROBAR(b.contar(TipoEvento::ACCESO) == 3);
+        CHECK(accepted(b.lock()) && Fake::lastAngle == 0);
+        const int previas = Fake::writes;
+        CHECK(accepted(b.c.processUid(uid, 4)));
+        CHECK(Fake::lastAngle == 90 && Fake::writes == previas + 1);
+        CHECK(b.c.lockState() == LockState::UNLOCKED);
+        for (const uint8_t* repetida : uids) CHECK(accepted(b.c.processUid(repetida, 4)));
+        CHECK(Fake::writes == previas + 1 && b.movements == 2);
+        CHECK(b.c.lockState() == LockState::UNLOCKED);
+        CHECK(b.count(EventType::UNLOCK) == 1 && b.count(EventType::LOCK) == 1);
+        CHECK(b.count(EventType::ACCESS) == 3);
       }
     }
   });
-  s.caso("modo bloqueado rechaza ambas credenciales desde cualquier estado sin movimientos", [] {
-    const uint8_t* uids[] = {Config::UID_TARJETA, Config::UID_LLAVERO};
+  s.testCase("locked mode rejects both credentials from any state without movement", [] {
+    const uint8_t* uids[] = {Config::CARD_UID, Config::KEYFOB_UID};
     const char* ids[] = {"tarjeta-1", "llavero-1"};
     for (int inicial = 0; inicial < 3; ++inicial) {
-      Banco b; b.cerrar();
-      if (inicial == 1) b.bloquear();
-      if (inicial == 2) b.desbloquear();
-      const auto estado = b.c.cerradura(); const int previos = b.movimientos;
-      const auto bloqueos = b.contar(TipoEvento::BLOQUEO);
-      const auto desbloqueos = b.contar(TipoEvento::DESBLOQUEO);
-      b.c.establecerModo(Modo::BLOQUEADO, diagnostico);
+      Harness b; b.close();
+      if (inicial == 1) b.lock();
+      if (inicial == 2) b.unlock();
+      const auto state = b.c.lockState(); const int previos = b.movements;
+      const auto bloqueos = b.count(EventType::LOCK);
+      const auto desbloqueos = b.count(EventType::UNLOCK);
+      b.c.setMode(Mode::LOCKED, diagnostic);
       for (int i = 0; i < 2; ++i) {
-        const auto r = b.c.procesarUid(uids[i], 4);
-        COMPROBAR(!aceptado(r) && std::strcmp(r.motivo, "modo_bloqueado") == 0);
-        COMPROBAR(std::strcmp(b.eventos.back().credentialId, ids[i]) == 0);
-        COMPROBAR(b.eventos.back().resultado == ResultadoEvento::RECHAZADO);
+        const auto r = b.c.processUid(uids[i], 4);
+        CHECK(!accepted(r) && std::strcmp(r.reason, "modo_bloqueado") == 0);
+        CHECK(std::strcmp(b.events.back().credentialId, ids[i]) == 0);
+        CHECK(b.events.back().result == EventResult::REJECTED);
       }
-      COMPROBAR(b.movimientos == previos && b.c.cerradura() == estado);
-      COMPROBAR(b.contar(TipoEvento::ACCESO) == 2 && !b.c.autocierrePendiente());
-      COMPROBAR(b.contar(TipoEvento::BLOQUEO) == bloqueos);
-      COMPROBAR(b.contar(TipoEvento::DESBLOQUEO) == desbloqueos);
+      CHECK(b.movements == previos && b.c.lockState() == state);
+      CHECK(b.count(EventType::ACCESS) == 2 && !b.c.autoLockPending());
+      CHECK(b.count(EventType::LOCK) == bloqueos);
+      CHECK(b.count(EventType::UNLOCK) == desbloqueos);
     }
   });
-  s.caso("repetir o alternar credenciales no mueve ni prolonga autocierre", [] {
-    for (const uint8_t* inicial : {Config::UID_TARJETA, Config::UID_LLAVERO}) {
-      Falso::ahora = 0; Banco b; b.cerrar();
-      COMPROBAR(aceptado(b.c.procesarUid(inicial, 4)));
-      Falso::ahora = 9000;
-      for (const uint8_t* uid : {Config::UID_TARJETA, Config::UID_LLAVERO, inicial}) {
-        const auto r = b.c.procesarUid(uid, 4);
-        COMPROBAR(aceptado(r) && std::strcmp(r.motivo, "sin_cambio") == 0);
+  s.testCase("repeating or alternating credentials neither moves the lock nor extends auto-lock", [] {
+    for (const uint8_t* inicial : {Config::CARD_UID, Config::KEYFOB_UID}) {
+      Fake::now = 0; Harness b; b.close();
+      CHECK(accepted(b.c.processUid(inicial, 4)));
+      Fake::now = 9000;
+      for (const uint8_t* uid : {Config::CARD_UID, Config::KEYFOB_UID, inicial}) {
+        const auto r = b.c.processUid(uid, 4);
+        CHECK(accepted(r) && std::strcmp(r.reason, "sin_cambio") == 0);
       }
-      COMPROBAR(b.movimientos == 1 && b.contar(TipoEvento::DESBLOQUEO) == 1);
-      COMPROBAR(b.contar(TipoEvento::ACCESO) == 4 && b.contar(TipoEvento::BLOQUEO) == 0);
-      Falso::ahora = 9999; b.c.actualizar(); COMPROBAR(b.movimientos == 1);
-      Falso::ahora = 10000; b.c.actualizar();
-      COMPROBAR(b.movimientos == 2 && b.c.cerradura() == EstadoCerradura::BLOQUEADA);
+      CHECK(b.movements == 1 && b.count(EventType::UNLOCK) == 1);
+      CHECK(b.count(EventType::ACCESS) == 4 && b.count(EventType::LOCK) == 0);
+      Fake::now = 9999; b.c.update(); CHECK(b.movements == 1);
+      Fake::now = 10000; b.c.update();
+      CHECK(b.movements == 2 && b.c.lockState() == LockState::LOCKED);
     }
   });
-  s.caso("UID desconocido un acceso sin movimiento", [] {
-    Banco b; const uint8_t uid[] = {1, 2, 3, 4};
-    COMPROBAR(!aceptado(b.c.procesarUid(uid, 4)));
-    COMPROBAR(!aceptado(b.c.procesarUid(nullptr, 4)));
-    COMPROBAR(b.movimientos == 0 && b.eventos.size() == 2);
-    COMPROBAR(b.contar(TipoEvento::ACCESO) == 2 && b.eventos[0].credentialId[0] == '\0');
+  s.testCase("unknown UID emits one access event without movement", [] {
+    Harness b; const uint8_t uid[] = {1, 2, 3, 4};
+    CHECK(!accepted(b.c.processUid(uid, 4)));
+    CHECK(!accepted(b.c.processUid(nullptr, 4)));
+    CHECK(b.movements == 0 && b.events.size() == 2);
+    CHECK(b.count(EventType::ACCESS) == 2 && b.events[0].credentialId[0] == '\0');
   });
-  s.caso("autocierre puerta inicialmente cerrada", [] {
-    Banco b; b.cerrar(); b.desbloquear(); COMPROBAR(b.c.autocierrePendiente());
-    Falso::ahora = 9999; b.c.actualizar(); COMPROBAR(b.movimientos == 1);
-    Falso::ahora = 10000; b.c.actualizar(); COMPROBAR(b.movimientos == 2);
-    COMPROBAR(b.c.cerradura() == EstadoCerradura::BLOQUEADA);
+  s.testCase("auto-lock when the door starts closed", [] {
+    Harness b; b.close(); b.unlock(); CHECK(b.c.autoLockPending());
+    Fake::now = 9999; b.c.update(); CHECK(b.movements == 1);
+    Fake::now = 10000; b.c.update(); CHECK(b.movements == 2);
+    CHECK(b.c.lockState() == LockState::LOCKED);
   });
-  s.caso("autocierre espera cierre de puerta abierta", [] {
-    Banco b; b.abrir(); b.desbloquear(); Falso::ahora = 15000; b.c.actualizar();
-    COMPROBAR(b.movimientos == 1 && !b.c.autocierrePendiente());
-    b.cerrar(); Falso::ahora += 9999; b.c.actualizar(); COMPROBAR(b.movimientos == 1);
-    ++Falso::ahora; b.c.actualizar(); COMPROBAR(b.movimientos == 2);
+  s.testCase("auto-lock waits for an open door to close", [] {
+    Harness b; b.open(); b.unlock(); Fake::now = 15000; b.c.update();
+    CHECK(b.movements == 1 && !b.c.autoLockPending());
+    b.close(); Fake::now += 9999; b.c.update(); CHECK(b.movements == 1);
+    ++Fake::now; b.c.update(); CHECK(b.movements == 2);
   });
-  s.caso("reapertura cancela y reinicia periodo completo", [] {
-    Banco b; b.cerrar(); b.desbloquear(); Falso::ahora = 7000; b.abrir();
-    Falso::ahora = 8000; b.cerrar(); Falso::ahora = 10000; b.c.actualizar();
-    COMPROBAR(b.movimientos == 1); Falso::ahora = 17999; b.c.actualizar();
-    COMPROBAR(b.movimientos == 1); ++Falso::ahora; b.c.actualizar();
-    COMPROBAR(b.movimientos == 2);
+  s.testCase("reopening cancels and restarts the full delay", [] {
+    Harness b; b.close(); b.unlock(); Fake::now = 7000; b.open();
+    Fake::now = 8000; b.close(); Fake::now = 10000; b.c.update();
+    CHECK(b.movements == 1); Fake::now = 17999; b.c.update();
+    CHECK(b.movements == 1); ++Fake::now; b.c.update();
+    CHECK(b.movements == 2);
   });
-  s.caso("offline cancela; recuperacion valida inicia periodo completo", [] {
-    Banco b; b.c.establecerAutocierre(40, diagnostico); b.cerrar(); b.desbloquear();
-    Falso::ahora = 30000; b.c.actualizar(); b.c.actualizar();
-    COMPROBAR(!b.c.autocierrePendiente() && b.c.puerta() == Puerta::DESCONOCIDA);
-    COMPROBAR(b.contar(TipoEvento::SENSOR) == 2); // online inicial y offline
-    COMPROBAR(!b.c.recibirLatido() && !b.c.sensorVigente());
-    Falso::ahora = 31000; COMPROBAR(b.c.recibirLatido(Puerta::CERRADA));
-    b.c.recibirLatido(Puerta::CERRADA); COMPROBAR(b.contar(TipoEvento::SENSOR) == 3);
-    Falso::ahora = 51000; b.c.recibirLatido(Puerta::CERRADA);
-    Falso::ahora = 70999; b.c.actualizar(); COMPROBAR(b.movimientos == 1);
-    ++Falso::ahora; b.c.actualizar(); COMPROBAR(b.movimientos == 2);
+  s.testCase("offline cancels and a valid recovery restarts the full delay", [] {
+    Harness b; b.c.setAutoLock(40, diagnostic); b.close(); b.unlock();
+    Fake::now = 30000; b.c.update(); b.c.update();
+    CHECK(!b.c.autoLockPending() && b.c.doorState() == Door::UNKNOWN);
+    CHECK(b.count(EventType::SENSOR) == 2); // initial online event and subsequent offline event
+    CHECK(!b.c.receiveHeartbeat() && !b.c.sensorIsFresh());
+    Fake::now = 31000; CHECK(b.c.receiveHeartbeat(Door::CLOSED));
+    b.c.receiveHeartbeat(Door::CLOSED); CHECK(b.count(EventType::SENSOR) == 3);
+    Fake::now = 51000; b.c.receiveHeartbeat(Door::CLOSED);
+    Fake::now = 70999; b.c.update(); CHECK(b.movements == 1);
+    ++Fake::now; b.c.update(); CHECK(b.movements == 2);
   });
-  s.caso("mensaje invalido no renueva vigencia", [] {
-    Banco b; b.cerrar(); Falso::ahora = 29000;
-    COMPROBAR(!b.c.actualizarPuerta(static_cast<Puerta>(99)));
-    COMPROBAR(!b.c.recibirLatido()); Falso::ahora = 30000;
-    COMPROBAR(!aceptado(b.bloquear()));
+  s.testCase("invalid message does not refresh sensor data", [] {
+    Harness b; b.close(); Fake::now = 29000;
+    CHECK(!b.c.updateDoor(static_cast<Door>(99)));
+    CHECK(!b.c.receiveHeartbeat()); Fake::now = 30000;
+    CHECK(!accepted(b.lock()));
   });
-  s.caso("manual no autocierra; automatico evalua inmediatamente", [] {
-    Banco b; b.c.establecerModo(Modo::MANUAL, diagnostico); b.cerrar(); b.desbloquear();
-    Falso::ahora = 11000; b.c.actualizar(); COMPROBAR(b.movimientos == 1);
-    b.c.establecerModo(Modo::AUTOMATICO, diagnostico);
-    Falso::ahora = 20999; b.c.actualizar(); COMPROBAR(b.movimientos == 1);
-    ++Falso::ahora; b.c.actualizar(); COMPROBAR(b.movimientos == 2);
+  s.testCase("manual mode skips auto-lock and automatic mode evaluates immediately", [] {
+    Harness b; b.c.setMode(Mode::MANUAL, diagnostic); b.close(); b.unlock();
+    Fake::now = 11000; b.c.update(); CHECK(b.movements == 1);
+    b.c.setMode(Mode::AUTOMATIC, diagnostic);
+    Fake::now = 20999; b.c.update(); CHECK(b.movements == 1);
+    ++Fake::now; b.c.update(); CHECK(b.movements == 2);
   });
-  s.caso("bloqueado cancela sin forzar bloqueo y rechaza desbloqueo", [] {
-    Banco b; b.cerrar(); b.desbloquear(); b.abrir();
-    b.c.establecerModo(Modo::BLOQUEADO, diagnostico);
-    COMPROBAR(!aceptado(b.desbloquear())); COMPROBAR(!b.c.autocierrePendiente());
-    Falso::ahora = 10000; b.c.actualizar(); COMPROBAR(b.movimientos == 1);
-    COMPROBAR(b.c.cerradura() == EstadoCerradura::DESBLOQUEADA);
-    COMPROBAR(!aceptado(b.c.establecerModo(static_cast<Modo>(255), diagnostico)));
-    COMPROBAR(b.c.modo() == Modo::BLOQUEADO);
+  s.testCase("locked mode cancels auto-lock without forcing movement and rejects unlock", [] {
+    Harness b; b.close(); b.unlock(); b.open();
+    b.c.setMode(Mode::LOCKED, diagnostic);
+    CHECK(!accepted(b.unlock())); CHECK(!b.c.autoLockPending());
+    Fake::now = 10000; b.c.update(); CHECK(b.movements == 1);
+    CHECK(b.c.lockState() == LockState::UNLOCKED);
+    CHECK(!accepted(b.c.setMode(static_cast<Mode>(255), diagnostic)));
+    CHECK(b.c.mode() == Mode::LOCKED);
   });
-  s.caso("repetir desbloqueo no mueve ni reinicia cuenta", [] {
-    Banco b; b.cerrar(); b.desbloquear(); Falso::ahora = 9000; b.desbloquear();
-    b.c.recibirLatido(Puerta::CERRADA); Falso::ahora = 10000; b.c.actualizar();
-    COMPROBAR(b.movimientos == 2);
-    b.bloquear(); COMPROBAR(b.movimientos == 2 && b.contar(TipoEvento::BLOQUEO) == 1);
+  s.testCase("repeating unlock neither moves the lock nor restarts the timer", [] {
+    Harness b; b.close(); b.unlock(); Fake::now = 9000; b.unlock();
+    b.c.receiveHeartbeat(Door::CLOSED); Fake::now = 10000; b.c.update();
+    CHECK(b.movements == 2);
+    b.lock(); CHECK(b.movements == 2 && b.count(EventType::LOCK) == 1);
   });
-  s.caso("rango y cambio de tiempo reinicia periodo completo", [] {
-    Banco b;
-    COMPROBAR(!aceptado(b.c.establecerAutocierre(4, diagnostico)));
-    COMPROBAR(!aceptado(b.c.establecerAutocierre(121, diagnostico)));
-    COMPROBAR(!aceptado(b.c.establecerAutocierre(UINT32_MAX, diagnostico)));
-    COMPROBAR(aceptado(b.c.establecerAutocierre(120, diagnostico)));
-    b.cerrar(); b.desbloquear(); Falso::ahora = 9000;
-    COMPROBAR(aceptado(b.c.establecerAutocierre(5, diagnostico)));
-    Falso::ahora = 13999; b.c.actualizar(); COMPROBAR(b.movimientos == 1);
-    ++Falso::ahora; b.c.actualizar(); COMPROBAR(b.movimientos == 2);
+  s.testCase("changing a valid delay restarts the full delay", [] {
+    Harness b;
+    CHECK(!accepted(b.c.setAutoLock(4, diagnostic)));
+    CHECK(!accepted(b.c.setAutoLock(121, diagnostic)));
+    CHECK(!accepted(b.c.setAutoLock(UINT32_MAX, diagnostic)));
+    CHECK(accepted(b.c.setAutoLock(120, diagnostic)));
+    b.close(); b.unlock(); Fake::now = 9000;
+    CHECK(accepted(b.c.setAutoLock(5, diagnostic)));
+    Fake::now = 13999; b.c.update(); CHECK(b.movements == 1);
+    ++Fake::now; b.c.update(); CHECK(b.movements == 2);
   });
-  s.caso("fallo del servo conserva estado y no informa movimiento", [] {
-    Banco b; b.cerrar(); b.emitirOrden = false;
-    COMPROBAR(!aceptado(b.bloquear()));
-    COMPROBAR(b.c.cerradura() == EstadoCerradura::DESCONOCIDA);
-    COMPROBAR(b.contar(TipoEvento::BLOQUEO) == 0);
-    COMPROBAR(std::strcmp(b.eventos.back().motivo, "orden_servo_fallida") == 0);
-    b.c.registrarMovimiento(nullptr); COMPROBAR(!aceptado(b.desbloquear()));
+  s.testCase("servo failure preserves state and does not report movement", [] {
+    Harness b; b.close(); b.issueCommand = false;
+    CHECK(!accepted(b.lock()));
+    CHECK(b.c.lockState() == LockState::UNKNOWN);
+    CHECK(b.count(EventType::LOCK) == 0);
+    CHECK(std::strcmp(b.events.back().reason, "orden_servo_fallida") == 0);
+    b.c.onMovement(nullptr); CHECK(!accepted(b.unlock()));
   });
-  s.caso("fallo de autocierre no reintenta cada loop", [] {
-    Banco b; b.cerrar(); b.desbloquear(); b.emitirOrden = false;
-    Falso::ahora = 10000; b.c.actualizar(); b.c.actualizar(); b.c.actualizar();
-    COMPROBAR(b.movimientos == 2 && !b.c.autocierrePendiente());
-    COMPROBAR(b.c.cerradura() == EstadoCerradura::DESBLOQUEADA);
+  s.testCase("auto-lock failure does not retry each loop", [] {
+    Harness b; b.close(); b.unlock(); b.issueCommand = false;
+    Fake::now = 10000; b.c.update(); b.c.update(); b.c.update();
+    CHECK(b.movements == 2 && !b.c.autoLockPending());
+    CHECK(b.c.lockState() == LockState::UNLOCKED);
   });
-  s.caso("callback de movimiento precede a estado y evento", [] {
-    ControladorCerradura c;
-    c.registrarMovimiento([&](Accion) {
-      COMPROBAR(c.cerradura() == EstadoCerradura::DESCONOCIDA); return true;
+  s.testCase("movement callback precedes state update and event", [] {
+    LockController c;
+    c.onMovement([&](Action) {
+      CHECK(c.lockState() == LockState::UNKNOWN); return true;
     });
-    COMPROBAR(aceptado(c.procesarAccion(Accion::DESBLOQUEAR, diagnostico)));
-    COMPROBAR(c.cerradura() == EstadoCerradura::DESBLOQUEADA);
+    CHECK(accepted(c.processAction(Action::UNLOCK, diagnostic)));
+    CHECK(c.lockState() == LockState::UNLOCKED);
   });
-  s.caso("eventos son copias con secuencia y marca de simulacion", [] {
-    Banco b; b.cerrar(); b.desbloquear(); const auto copia = b.eventos;
-    b.abrir(); b.c.establecerModo(Modo::MANUAL, diagnostico);
-    for (size_t i = 0; i < b.eventos.size(); ++i) {
-      COMPROBAR(b.eventos[i].seq == i + 1 && b.eventos[i].simulado);
+  s.testCase("events are copies carrying a sequence and simulation flag", [] {
+    Harness b; b.close(); b.unlock(); const auto copy = b.events;
+    b.open(); b.c.setMode(Mode::MANUAL, diagnostic);
+    for (size_t i = 0; i < b.events.size(); ++i) {
+      CHECK(b.events[i].seq == i + 1 && b.events[i].simulated);
     }
-    COMPROBAR(copia[0].puerta == Puerta::CERRADA && copia[0].modo == Modo::AUTOMATICO);
-    COMPROBAR(copia[0].origen == diagnostico && std::strcmp(copia[0].motivo, "sensor_online") == 0);
+    CHECK(copy[0].doorState == Door::CLOSED && copy[0].mode == Mode::AUTOMATIC);
+    CHECK(copy[0].source == diagnostic && std::strcmp(copy[0].reason, "sensor_online") == 0);
   });
-  s.caso("millis desborda durante autocierre y vigencia", [] {
-    Falso::ahora = UINT32_MAX - 5000; Banco b; b.cerrar(); b.desbloquear();
-    Falso::ahora += 9999; b.c.actualizar(); COMPROBAR(b.movimientos == 1);
-    ++Falso::ahora; b.c.actualizar(); COMPROBAR(b.movimientos == 2);
-    Falso::ahora += 20000; b.c.actualizar(); COMPROBAR(!b.c.sensorVigente());
+  s.testCase("millis wraparound during auto-lock and sensor timeout", [] {
+    Fake::now = UINT32_MAX - 5000; Harness b; b.close(); b.unlock();
+    Fake::now += 9999; b.c.update(); CHECK(b.movements == 1);
+    ++Fake::now; b.c.update(); CHECK(b.movements == 2);
+    Fake::now += 20000; b.c.update(); CHECK(!b.c.sensorIsFresh());
   });
-  s.caso("servo no conecta al arrancar y valida posiciones", [] {
-    ServoCerrojo servo(13, 700); COMPROBAR(servo.begin());
-    COMPROBAR(Falso::escrituras == 0); COMPROBAR(!servo.moverA(45));
-    Falso::falloAttach = true; COMPROBAR(!servo.bloquear() && Falso::escrituras == 0);
-    Falso::falloAttach = false; COMPROBAR(servo.bloquear() && Falso::ultimoAngulo == 0);
-    Falso::ahora = 700; servo.actualizar(); Falso::falloAttach = true;
-    COMPROBAR(!servo.desbloquear()); ServoCerrojo invalido(35, 700);
-    COMPROBAR(!invalido.begin() && !invalido.desbloquear());
+  s.testCase("servo stays detached at startup and validates positions", [] {
+    LockServo servo(13, 700); CHECK(servo.begin());
+    CHECK(Fake::writes == 0); CHECK(!servo.moveTo(45));
+    Fake::attachFailure = true; CHECK(!servo.lock() && Fake::writes == 0);
+    Fake::attachFailure = false; CHECK(servo.lock() && Fake::lastAngle == 0);
+    Fake::now = 700; servo.update(); Fake::attachFailure = true;
+    CHECK(!servo.unlock()); LockServo invalido(35, 700);
+    CHECK(!invalido.begin() && !invalido.unlock());
   });
-  s.caso("detach seguro al desbordar millis", [] {
-    ServoCerrojo servo(13, 700); servo.begin(); Falso::ahora = UINT32_MAX - 300;
-    COMPROBAR(servo.desbloquear()); Falso::ahora += 699; servo.actualizar();
-    Falso::falloAttach = true; COMPROBAR(servo.bloquear()); // aun conectado
-    Falso::ahora += 700; servo.actualizar(); COMPROBAR(!servo.bloquear());
+  s.testCase("servo detaches safely across millis wraparound", [] {
+    LockServo servo(13, 700); servo.begin(); Fake::now = UINT32_MAX - 300;
+    CHECK(servo.unlock()); Fake::now += 699; servo.update();
+    Fake::attachFailure = true; CHECK(servo.lock()); // still attached
+    Fake::now += 700; servo.update(); CHECK(!servo.lock());
   });
-  s.caso("parser incremental descarta exceso y valida entero completo", [] {
-    MonitorSerie m;
-    for (char c : std::string("  ESTADO  ")) COMPROBAR(m.recibir(c) == MonitorSerie::Resultado::INCOMPLETA);
-    COMPROBAR(m.recibir('\r') == MonitorSerie::Resultado::LISTA);
-    COMPROBAR(std::strcmp(m.linea(), "estado") == 0);
-    COMPROBAR(m.recibir('\n') == MonitorSerie::Resultado::INCOMPLETA);
-    for (int i = 0; i < 100; ++i) m.recibir('a');
-    COMPROBAR(m.recibir('\n') == MonitorSerie::Resultado::INVALIDA);
-    m.recibir('\0'); m.recibir('x'); COMPROBAR(m.recibir('\n') == MonitorSerie::Resultado::INVALIDA);
-    uint32_t valor = 0; COMPROBAR(MonitorSerie::entero("120", valor) && valor == 120);
-    COMPROBAR(!MonitorSerie::entero("10x", valor)); COMPROBAR(!MonitorSerie::entero("-5", valor));
-    COMPROBAR(!MonitorSerie::entero("", valor)); COMPROBAR(!MonitorSerie::entero("4294967296", valor));
-    COMPROBAR(MonitorSerie::entero("4294967295", valor) && valor == UINT32_MAX);
+  s.testCase("incremental parser discards overflow and validates complete integers", [] {
+    SerialMonitor m;
+    for (char c : std::string("  ESTADO  ")) CHECK(m.receive(c) == SerialMonitor::Result::INCOMPLETE);
+    CHECK(m.receive('\r') == SerialMonitor::Result::READY);
+    CHECK(std::strcmp(m.line(), "estado") == 0);
+    CHECK(m.receive('\n') == SerialMonitor::Result::INCOMPLETE);
+    for (int i = 0; i < 100; ++i) m.receive('a');
+    CHECK(m.receive('\n') == SerialMonitor::Result::INVALID);
+    m.receive('\0'); m.receive('x'); CHECK(m.receive('\n') == SerialMonitor::Result::INVALID);
+    uint32_t value = 0; CHECK(SerialMonitor::parseUnsigned("120", value) && value == 120);
+    CHECK(!SerialMonitor::parseUnsigned("10x", value)); CHECK(!SerialMonitor::parseUnsigned("-5", value));
+    CHECK(!SerialMonitor::parseUnsigned("", value)); CHECK(!SerialMonitor::parseUnsigned("4294967296", value));
+    CHECK(SerialMonitor::parseUnsigned("4294967295", value) && value == UINT32_MAX);
   });
-  return s.resultado();
+  return s.result();
 }
